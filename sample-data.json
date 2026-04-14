@@ -1,0 +1,51 @@
+{
+  "profile": {
+    "name": "原子旅途",
+    "vip": true,
+    "city": "贵阳市",
+    "constellation": "处女座",
+    "entriesCount": 636,
+    "ipLocation": "广东",
+    "gender": "male",
+    "avatar": "",
+    "friendsCount": 139,
+    "highlightedMomentsCount": 2449
+  },
+  "posts": [
+    {
+      "id": "post-1",
+      "timestamp": "2025-12-16 00:01",
+      "text": "，",
+      "likes": 4,
+      "comments": 5,
+      "showShare": true
+    },
+    {
+      "id": "post-2",
+      "timestamp": "2025-12-15 18:25",
+      "text": "忍不住再说一些什么，我是一个情感丰富的人，每天有100件事情想要说。今晚就截止动态发布了，我再说一些什么吧～",
+      "likes": 0,
+      "comments": 0,
+      "showShare": false,
+      "imageCount": 9
+    },
+    {
+      "id": "post-3",
+      "timestamp": "2025-12-15 01:30",
+      "text": "突然回想今天是什么天气，我才发现自己居然不能一下子讲出答案。但脑海里闪过几个穿过走廊时透过窗户看向窗外的瞬间，一番回想之后我才确认，今天应该还不错。",
+      "likes": 3,
+      "comments": 1,
+      "showShare": true,
+      "imageCount": 4
+    },
+    {
+      "id": "post-4",
+      "timestamp": "2025-12-13 13:44",
+      "text": "这也许是我最后一次在可话敲下长文了吧\n两天前，我写下：\n“我还是不愿意面对这个事实，每天表面上在找自己很忙的理由，实际我知道我...”",
+      "likes": 6,
+      "comments": 2,
+      "showShare": false,
+      "imageCount": 1
+    }
+  ]
+}

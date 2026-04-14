@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>&#21407;&#23376;&#26053;&#36884;&#20027;&#39029;&#22797;&#21051;</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="phone-frame">
+        <div class="phone-screen" id="phoneScreen">
+          <header class="top-bar">
+            <div class="status-time">9:41</div>
+            <div class="top-actions">
+              <button class="action-circle" id="searchButton" type="button" aria-label="&#25628;&#32034;">
+                <span class="icon-search"></span>
+              </button>
+              <button class="action-circle" id="editProfileButton" type="button" aria-label="&#32534;&#36753;&#36164;&#26009;">
+                <span class="icon-edit"></span>
+              </button>
+              <button class="action-circle" id="settingsButton" type="button" aria-label="&#25171;&#24320;&#35774;&#32622;">
+                <span class="icon-gear"></span>
+              </button>
+            </div>
+          </header>
+
+          <section class="hero-section">
+            <div class="hero-background">
+              <img id="coverImage" class="cover-image" alt="&#39030;&#37096;&#32972;&#26223;&#22270;" />
+            </div>
+          </section>
+
+          <main class="content-sheet">
+            <div class="avatar-wrap">
+              <img id="avatarImage" class="avatar-image" alt="&#29992;&#25143;&#22836;&#20687;" />
+              <div class="avatar-placeholder" id="avatarPlaceholder">
+                <span class="avatar-letter" id="avatarLetter">&#21407;</span>
+              </div>
+            </div>
+
+            <section class="profile-panel">
+              <div class="profile-title">
+                <h1 id="profileName">&#21407;&#23376;&#26053;&#36884;</h1>
+                <span class="vip-badge">
+                  <span class="icon-crown icon-crown-pink"></span>
+                  VIP
+                </span>
+              </div>
+              <p class="profile-meta" id="profileMeta"></p>
+              <p class="profile-submeta" id="profileSubmetaRow">IP <span id="ipLocation"></span></p>
+            </section>
+
+            <section class="feed-section">
+              <div id="postsContainer" class="posts-container"></div>
+            </section>
+          </main>
+
+          <nav class="bottom-nav">
+            <button class="nav-item is-muted" type="button" aria-label="&#39318;&#39029;">
+              <span class="icon-home"></span>
+            </button>
+            <button class="nav-item is-muted" type="button" aria-label="&#21160;&#24577;">
+              <span class="icon-chat"></span>
+            </button>
+            <button class="nav-item is-active" type="button" aria-label="&#25105;&#30340;">
+              <span class="icon-user"></span>
+            </button>
+          </nav>
+
+          <div id="settingsBackdrop" class="settings-backdrop is-hidden"></div>
+          <aside id="settingsMenu" class="settings-menu is-hidden" aria-hidden="true">
+            <div class="settings-header">
+              <div>
+                <p class="settings-eyebrow">Settings</p>
+                <h2>&#23548;&#20837;&#25968;&#25454;</h2>
+              </div>
+              <button id="settingsClose" class="settings-close" type="button" aria-label="&#20851;&#38381;&#35774;&#32622;">
+                <span class="icon-close"></span>
+              </button>
+            </div>
+
+            <p class="settings-copy">
+              &#36825;&#37324;&#19987;&#38376;&#36127;&#36131;&#23548;&#20837;&#21487;&#35805; ZIP&#65292;&#24182;&#33258;&#21160;&#35782;&#21035;&#8220;&#25105;&#30340;&#21160;&#24577; / &#24180;&#20221; / &#21160;&#24577;&#20869;&#23481;.txt&#8221;&#21644;&#8220;&#22270;&#29255;&amp;&#35270;&#39057; / &#26376;&#20221; / &#22270;&#29255;&#25110;&#35270;&#39057;&#25991;&#20214;&#8221;&#12290;&#23553;&#38754;&#21644;&#22836;&#20687;&#30340;&#26356;&#25442;&#35831;&#21040;&#21491;&#19978;&#35282;&#30340;&#32534;&#36753;&#36164;&#26009;&#39029;&#25805;&#20316;&#12290;
+            </p>
+
+            <div class="settings-actions">
+              <label class="primary-button file-button">
+                <input id="fileInput" type="file" accept=".zip,application/zip" />
+                &#23548;&#20837;&#21487;&#35805; ZIP
+              </label>
+              <button id="clearSessionButton" class="secondary-button" type="button">&#28165;&#31354;&#24403;&#21069;&#20449;&#24687;</button>
+            </div>
+
+            <p id="importSummary" class="helper-text">&#24403;&#21069;&#26159;&#31034;&#20363;&#25968;&#25454;&#12290;</p>
+            <p id="statusMessage" class="status-message" aria-live="polite"></p>
+          </aside>
+
+          <section id="searchView" class="app-view is-hidden" aria-hidden="true">
+            <header class="subpage-header">
+              <button id="searchBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#20027;&#39029;">
+                <span class="icon-back"></span>
+              </button>
+              <label class="search-field">
+                <span class="icon-search search-field-icon"></span>
+                <input id="searchInput" type="search" placeholder="&#25628;&#32034;&#21160;&#24577;&#20869;&#23481;" />
+              </label>
+            </header>
+            <main class="subpage-body">
+              <div class="search-summary" id="searchSummary">&#36755;&#20837;&#20851;&#38190;&#35789;&#25628;&#32034;&#21160;&#24577;</div>
+              <div id="searchResults" class="posts-container posts-container-search"></div>
+            </main>
+          </section>
+
+          <section id="detailView" class="app-view is-hidden" aria-hidden="true">
+            <header class="subpage-header detail-header">
+              <button id="detailBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#19978;&#19968;&#39029;">
+                <span class="icon-back"></span>
+              </button>
+              <div class="detail-header-copy">
+                <p>&#21160;&#24577;&#35814;&#24773;</p>
+              </div>
+            </header>
+            <main class="subpage-body">
+              <article class="post-card post-card-detail" id="detailCard">
+                <div class="post-header">
+                  <span class="post-time" id="detailTime"></span>
+                </div>
+                <p class="post-text post-text-full" id="detailText"></p>
+                <div class="post-gallery" id="detailGallery"></div>
+              </article>
+            </main>
+          </section>
+
+          <section id="profileEditView" class="app-view is-hidden" aria-hidden="true">
+            <header class="subpage-header detail-header">
+              <button id="profileEditBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#20027;&#39029;">
+                <span class="icon-back"></span>
+              </button>
+              <div class="detail-header-copy">
+                <p>&#32534;&#36753;&#36164;&#26009;</p>
+              </div>
+            </header>
+            <main class="subpage-body">
+              <form id="profileEditForm" class="form-card">
+                <section class="media-edit-card">
+                  <div class="media-edit-copy">
+                    <span class="media-edit-label">&#39030;&#37096;&#23553;&#38754;</span>
+                    <span class="media-edit-hint">&#21487;&#20197;&#26356;&#25442;&#24403;&#21069;&#39029;&#38754;&#30340;&#32972;&#26223;&#22270;</span>
+                  </div>
+                  <button id="coverEditButton" class="secondary-button media-edit-button" type="button">&#26356;&#25442;&#32972;&#26223;&#22270;</button>
+                </section>
+                <section class="media-edit-card">
+                  <div class="media-edit-copy">
+                    <span class="media-edit-label">&#22836;&#20687;</span>
+                    <span class="media-edit-hint">&#24314;&#35758;&#19978;&#20256;&#27491;&#26041;&#24418;&#22270;&#29255;&#20197;&#33719;&#24471;&#26356;&#20339;&#25928;&#26524;</span>
+                  </div>
+                  <button id="avatarEditButton" class="secondary-button media-edit-button" type="button">&#26356;&#25442;&#22836;&#20687;</button>
+                </section>
+                <label class="form-field">
+                  <span>&#22478;&#24066;</span>
+                  <input id="cityInput" type="text" maxlength="20" placeholder="&#22826;&#38451;&#31995;" />
+                </label>
+                <label class="form-field">
+                  <span>&#26143;&#24231;</span>
+                  <input id="constellationInput" type="text" maxlength="20" placeholder="&#24320;&#24515;&#24231;" />
+                </label>
+                <label class="form-field">
+                  <span>IP &#22320;&#22336;</span>
+                  <input id="ipInput" type="text" maxlength="20" placeholder="&#22320;&#29699;&#26449;" />
+                </label>
+                <button id="profileSaveButton" class="primary-button form-submit-button" type="submit">&#20445;&#23384;&#36164;&#26009;</button>
+              </form>
+            </main>
+          </section>
+
+          <div id="lightboxView" class="lightbox-view is-hidden" aria-hidden="true">
+            <button id="lightboxClose" class="lightbox-close" type="button" aria-label="&#20851;&#38381;&#22823;&#22270;">
+              <span class="icon-close"></span>
+            </button>
+            <a id="lightboxDownload" class="lightbox-download" href="#" download="dynamic-image.jpg">&#20445;&#23384;&#22270;&#29255;</a>
+            <div class="lightbox-stage">
+              <img id="lightboxImage" class="lightbox-image" alt="&#22823;&#22270;&#39044;&#35272;" />
+            </div>
+          </div>
+
+          <input id="coverInput" type="file" accept="image/*" hidden />
+          <input id="avatarInput" type="file" accept="image/*" hidden />
+        </div>
+      </div>
+    </div>
+
+    <template id="postTemplate">
+      <article class="post-card">
+        <div class="post-header">
+          <span class="post-time"></span>
+          <button class="more-button" type="button" aria-label="&#26356;&#22810;">
+            <span class="icon-dots"></span>
+          </button>
+        </div>
+        <p class="post-text"></p>
+        <div class="post-gallery"></div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
