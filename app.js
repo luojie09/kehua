@@ -68,8 +68,15 @@ const sampleData = {
   posts: []
 };
 
-const storedData = loadStoredData();
-const profilePreferences = loadProfilePreferences();
+const isClientRuntime = typeof window !== "undefined" && typeof document !== "undefined";
+const storedData = isClientRuntime ? loadStoredData() : null;
+const profilePreferences = isClientRuntime
+  ? loadProfilePreferences()
+  : {
+      city: sampleData.profile.city,
+      constellation: sampleData.profile.constellation,
+      ipLocation: sampleData.profile.ipLocation
+    };
 
 const elements = {
   phoneScreen: document.getElementById("phoneScreen"),
@@ -108,6 +115,7 @@ const elements = {
   lightboxImage: document.getElementById("lightboxImage"),
   statusMessage: document.getElementById("statusMessage"),
   importSummary: document.getElementById("importSummary"),
+  initLoading: document.getElementById("initLoading"),
   fileInput: document.getElementById("fileInput"),
   clearSessionButton: document.getElementById("clearSessionButton"),
   settingsButton: document.getElementById("settingsButton"),
@@ -137,6 +145,8 @@ let detailReturnView = "home";
 let currentDetailPostId = "";
 let currentLightboxUrl = "";
 let lightboxLongPressTimer = null;
+let pendingMediaHydrationFrame = 0;
+let isInitializing = true;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
@@ -361,7 +371,7 @@ function queuePersistedState(record) {
 }
 
 function persistData() {
-  if (isHydratingPersistedState) {
+  if (isHydratingPersistedState || isInitializing) {
     return;
   }
 
@@ -515,7 +525,14 @@ function render() {
   updateSearchResults();
   renderCurrentDetailIfNeeded();
   updateImportSummary();
+  elements.initLoading.classList.remove("is-visible");
   persistData();
+}
+
+function renderInitializationState() {
+  elements.initLoading.classList.add("is-visible");
+  elements.postsContainer.innerHTML =
+    '<article class="post-card"><p class="post-text is-empty">正在恢复你上次的数据...</p></article>';
 }
 
 function renderPostList(container, posts, options = {}) {
@@ -599,6 +616,8 @@ function buildGallery(container, media, options = {}) {
     renderGalleryItem(item, mediaItem);
     container.appendChild(item);
   });
+
+  schedulePendingMediaHydration();
 }
 
 function findPostById(postId) {
@@ -812,7 +831,7 @@ function saveCurrentLightboxImage() {
 }
 
 function renderGalleryItem(node, mediaItem) {
-  if (!mediaItem.lookupKey && !mediaItem.url) {
+  if (!mediaItem.lookupKey && !mediaItem.url && !mediaItem.filename) {
     return;
   }
 
@@ -825,7 +844,23 @@ function renderGalleryItem(node, mediaItem) {
   node.dataset.lookupKey = mediaItem.lookupKey;
   node.dataset.mediaType = mediaItem.type;
   node.dataset.filename = mediaItem.filename;
-  observeMediaNode(node);
+
+  if (node.isConnected) {
+    observeMediaNode(node);
+  }
+}
+
+function schedulePendingMediaHydration() {
+  if (pendingMediaHydrationFrame) {
+    return;
+  }
+
+  pendingMediaHydrationFrame = window.requestAnimationFrame(() => {
+    pendingMediaHydrationFrame = 0;
+    document.querySelectorAll(".gallery-item.is-pending").forEach((node) => {
+      observeMediaNode(node);
+    });
+  });
 }
 
 function ensureMediaObserver() {
@@ -883,7 +918,7 @@ async function resolveMediaUrl(mediaItem) {
     return mediaItem.url;
   }
 
-  const lookupKey = optionalString(mediaItem.lookupKey).toLowerCase();
+  const lookupKey = resolveMediaLookupKey(mediaItem.lookupKey, mediaItem.filename);
   if (!lookupKey) {
     return "";
   }
@@ -901,6 +936,51 @@ async function resolveMediaUrl(mediaItem) {
   const url = URL.createObjectURL(blob);
   zipMediaUrlCache.set(lookupKey, url);
   return url;
+}
+
+function resolveMediaLookupKey(lookupKey, filename) {
+  const candidates = [];
+  const lookupFull = normalizeMediaKeyCandidate(lookupKey, false);
+  const lookupBase = normalizeMediaKeyCandidate(lookupKey, true);
+  const filenameFull = normalizeMediaKeyCandidate(filename, false);
+  const filenameBase = normalizeMediaKeyCandidate(filename, true);
+
+  [lookupFull, lookupBase, filenameFull, filenameBase].forEach((candidate) => {
+    if (candidate && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
+  });
+
+  for (const candidate of candidates) {
+    if (zipMediaEntries.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of candidates) {
+    const suffix = `/${candidate}`;
+    for (const entryKey of zipMediaEntries.keys()) {
+      if (entryKey.endsWith(suffix)) {
+        return entryKey;
+      }
+    }
+  }
+
+  return candidates[0] || "";
+}
+
+function normalizeMediaKeyCandidate(value, asBaseName) {
+  const cleaned = optionalString(value).replace(/\\/g, "/").toLowerCase().replace(/^\.\//, "");
+  if (!cleaned) {
+    return "";
+  }
+
+  if (!asBaseName) {
+    return cleaned;
+  }
+
+  const base = baseName(cleaned);
+  return base.toLowerCase();
 }
 
 function mountResolvedMedia(node, mediaItem, url) {
@@ -934,6 +1014,11 @@ function mountResolvedMedia(node, mediaItem, url) {
 }
 
 function clearZipMediaContext() {
+  if (pendingMediaHydrationFrame) {
+    window.cancelAnimationFrame(pendingMediaHydrationFrame);
+    pendingMediaHydrationFrame = 0;
+  }
+
   if (mediaObserver) {
     mediaObserver.disconnect();
     mediaObserver = null;
@@ -1087,13 +1172,15 @@ async function parseKehuaArchive(file) {
 
   const mediaEntries = new Map();
   entries.forEach((entry) => {
-    const name = baseName(entry.name);
+    const normalizedEntryName = normalizeArchivePath(entry.name).toLowerCase();
+    const name = baseName(normalizedEntryName);
 
     if (!isSupportedMediaFile(name)) {
       return;
     }
 
-    mediaEntries.set(name.toLowerCase(), entry);
+    mediaEntries.set(name, entry);
+    mediaEntries.set(normalizedEntryName, entry);
   });
 
   const years = new Set();
@@ -1179,13 +1266,19 @@ function parseDynamicText(content, mediaEntries, sourceName) {
     const mediaMatch = trimmed.match(MEDIA_REFERENCE_REGEX);
     if (mediaMatch) {
       const filename = mediaMatch[2].trim();
-      const lookupKey = filename.toLowerCase();
+      const lookupFull = normalizeMediaKeyCandidate(filename, false);
+      const lookupBase = normalizeMediaKeyCandidate(filename, true);
       const mediaLabel = mediaMatch[1].trim();
+      const resolvedLookupKey = mediaEntries.has(lookupFull)
+        ? lookupFull
+        : mediaEntries.has(lookupBase)
+          ? lookupBase
+          : "";
 
       currentPost.media.push({
         type: mediaLabel.includes("视频") ? "video" : detectMediaType(filename),
         filename,
-        lookupKey: mediaEntries.has(lookupKey) ? lookupKey : "",
+        lookupKey: resolvedLookupKey,
         url: ""
       });
       return;
@@ -1310,6 +1403,13 @@ async function hydratePersistedState() {
   isHydratingPersistedState = true;
 
   try {
+    if (persistedState.data) {
+      currentData = normalizeData(persistedState.data);
+    }
+
+    currentImportMode =
+      persistedState.importMode === "zip" ? "zip" : persistedState.importMode === "json" ? "json" : "sample";
+
     setPreviewBlob("cover", persistedState.coverBlob);
     setPreviewBlob("avatar", persistedState.avatarBlob);
 
@@ -1319,26 +1419,36 @@ async function hydratePersistedState() {
         optionalString(persistedState.zipFileName) || "kehua-export.zip",
         { type: persistedState.zipFile.type || "application/zip" }
       );
-      const result = await parseKehuaArchive(restoredFile);
-      clearZipMediaContext();
-      zipMediaEntries = result.mediaEntries;
       persistedZipFile = persistedState.zipFile;
       persistedZipFileName = restoredFile.name;
-      currentImportMode = "zip";
-      currentData = normalizeData(persistedState.data || result.data);
+
+      if (typeof JSZip === "undefined") {
+        updateStatus("已恢复历史数据；媒体文件将在 ZIP 解析器可用后继续恢复。", "is-loading");
+        return;
+      }
+
+      try {
+        const result = await parseKehuaArchive(restoredFile);
+        clearZipMediaContext();
+        zipMediaEntries = result.mediaEntries;
+
+        if (!persistedState.data) {
+          currentData = normalizeData(result.data);
+        }
+      } catch (zipError) {
+        console.warn("Failed to restore ZIP media entries, fallback to snapshot only.", zipError);
+        updateStatus("已恢复历史文本数据，部分图片资源暂未恢复。", "is-loading");
+      }
       return;
     }
 
     persistedZipFile = null;
     persistedZipFileName = "";
-    currentImportMode = persistedState.importMode === "json" ? "json" : "sample";
-
-    if (persistedState.data) {
-      currentData = normalizeData(persistedState.data);
-    }
   } catch (error) {
     console.warn("Failed to restore persisted state, falling back to current session.", error);
-    resetSessionState();
+    if (!persistedState?.data) {
+      resetSessionState();
+    }
   } finally {
     isHydratingPersistedState = false;
   }
@@ -1417,116 +1527,134 @@ function clearCurrentSession() {
   updateStatus("已清空当前信息，现在可以重新导入新的 ZIP。", "is-success");
 }
 
-elements.settingsButton.addEventListener("click", toggleSettingsMenu);
-elements.settingsClose.addEventListener("click", closeSettingsMenu);
-elements.settingsBackdrop.addEventListener("click", closeSettingsMenu);
-elements.clearSessionButton.addEventListener("click", clearCurrentSession);
-elements.coverEditButton.addEventListener("click", () => {
-  elements.coverInput.click();
-});
-elements.avatarEditButton.addEventListener("click", () => {
-  elements.avatarInput.click();
-});
-elements.coverInput.addEventListener("change", (event) => {
-  const [file] = event.target.files ?? [];
-  applyImagePreview("cover", file);
-});
-elements.avatarInput.addEventListener("change", (event) => {
-  const [file] = event.target.files ?? [];
-  applyImagePreview("avatar", file);
-});
-elements.postsContainer.addEventListener("click", handlePostAction);
-elements.postsContainer.addEventListener("keydown", handleExpandableKeydown);
-elements.searchResults.addEventListener("click", handlePostAction);
-elements.searchResults.addEventListener("keydown", handleExpandableKeydown);
-elements.detailGallery.addEventListener("click", handlePostAction);
-elements.searchButton.addEventListener("click", openSearchView);
-elements.editProfileButton.addEventListener("click", openProfileEditView);
-elements.searchBackButton.addEventListener("click", closeSearchView);
-elements.profileEditBackButton.addEventListener("click", closeProfileEditView);
-elements.profileEditForm.addEventListener("submit", saveProfileDetails);
-elements.searchInput.addEventListener("input", updateSearchResults);
-elements.detailBackButton.addEventListener("click", closeDetailView);
-elements.lightboxClose.addEventListener("click", closeLightbox);
-elements.lightboxView.addEventListener("click", (event) => {
-  if (event.target === elements.lightboxView) {
-    closeLightbox();
-  }
-});
-elements.lightboxDownload.addEventListener("click", () => {
-  clearTimeout(lightboxLongPressTimer);
-  lightboxLongPressTimer = null;
-});
-elements.lightboxImage.addEventListener("touchstart", () => {
-  clearTimeout(lightboxLongPressTimer);
-  lightboxLongPressTimer = window.setTimeout(() => {
-    saveCurrentLightboxImage();
-  }, 650);
-}, { passive: true });
-["touchend", "touchcancel", "touchmove"].forEach((eventName) => {
-  elements.lightboxImage.addEventListener(eventName, () => {
+if (isClientRuntime) {
+  elements.settingsButton.addEventListener("click", toggleSettingsMenu);
+  elements.settingsClose.addEventListener("click", closeSettingsMenu);
+  elements.settingsBackdrop.addEventListener("click", closeSettingsMenu);
+  elements.clearSessionButton.addEventListener("click", clearCurrentSession);
+  elements.coverEditButton.addEventListener("click", () => {
+    elements.coverInput.click();
+  });
+  elements.avatarEditButton.addEventListener("click", () => {
+    elements.avatarInput.click();
+  });
+  elements.coverInput.addEventListener("change", (event) => {
+    const [file] = event.target.files ?? [];
+    applyImagePreview("cover", file);
+  });
+  elements.avatarInput.addEventListener("change", (event) => {
+    const [file] = event.target.files ?? [];
+    applyImagePreview("avatar", file);
+  });
+  elements.postsContainer.addEventListener("click", handlePostAction);
+  elements.postsContainer.addEventListener("keydown", handleExpandableKeydown);
+  elements.searchResults.addEventListener("click", handlePostAction);
+  elements.searchResults.addEventListener("keydown", handleExpandableKeydown);
+  elements.detailGallery.addEventListener("click", handlePostAction);
+  elements.searchButton.addEventListener("click", openSearchView);
+  elements.editProfileButton.addEventListener("click", openProfileEditView);
+  elements.searchBackButton.addEventListener("click", closeSearchView);
+  elements.profileEditBackButton.addEventListener("click", closeProfileEditView);
+  elements.profileEditForm.addEventListener("submit", saveProfileDetails);
+  elements.searchInput.addEventListener("input", updateSearchResults);
+  elements.detailBackButton.addEventListener("click", closeDetailView);
+  elements.lightboxClose.addEventListener("click", closeLightbox);
+  elements.lightboxView.addEventListener("click", (event) => {
+    if (event.target === elements.lightboxView) {
+      closeLightbox();
+    }
+  });
+  elements.lightboxDownload.addEventListener("click", () => {
     clearTimeout(lightboxLongPressTimer);
     lightboxLongPressTimer = null;
-  }, { passive: true });
-});
+  });
+  elements.lightboxImage.addEventListener(
+    "touchstart",
+    () => {
+      clearTimeout(lightboxLongPressTimer);
+      lightboxLongPressTimer = window.setTimeout(() => {
+        saveCurrentLightboxImage();
+      }, 650);
+    },
+    { passive: true }
+  );
+  ["touchend", "touchcancel", "touchmove"].forEach((eventName) => {
+    elements.lightboxImage.addEventListener(
+      eventName,
+      () => {
+        clearTimeout(lightboxLongPressTimer);
+        lightboxLongPressTimer = null;
+      },
+      { passive: true }
+    );
+  });
 
-elements.fileInput.addEventListener("change", async (event) => {
-  const [file] = event.target.files ?? [];
+  elements.fileInput.addEventListener("change", async (event) => {
+    const [file] = event.target.files ?? [];
 
-  try {
-    await importSelectedFile(file);
-  } catch (error) {
-    updateStatus(`读取文件失败：${error.message}`, "is-error");
-  } finally {
-    elements.fileInput.value = "";
-  }
-});
+    try {
+      await importSelectedFile(file);
+    } catch (error) {
+      updateStatus(`读取文件失败：${error.message}`, "is-error");
+    } finally {
+      elements.fileInput.value = "";
+    }
+  });
 
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    closeLightbox();
-    closeSettingsMenu();
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeLightbox();
+      closeSettingsMenu();
 
-    if (activeView === "detail") {
-      closeDetailView();
+      if (activeView === "detail") {
+        closeDetailView();
+        return;
+      }
+
+      if (activeView === "profileEdit") {
+        closeProfileEditView();
+        return;
+      }
+
+      if (activeView === "search") {
+        closeSearchView();
+      }
+    }
+  });
+
+  window.addEventListener("dragover", (event) => {
+    event.preventDefault();
+  });
+
+  window.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    const [file] = [...(event.dataTransfer?.files ?? [])];
+
+    if (!file) {
       return;
     }
 
-    if (activeView === "profileEdit") {
-      closeProfileEditView();
-      return;
+    openSettingsMenu();
+
+    try {
+      await importSelectedFile(file);
+    } catch (error) {
+      updateStatus(`拖拽导入失败：${error.message}`, "is-error");
     }
+  });
+}
 
-    if (activeView === "search") {
-      closeSearchView();
-    }
-  }
-});
-
-window.addEventListener("dragover", (event) => {
-  event.preventDefault();
-});
-
-window.addEventListener("drop", async (event) => {
-  event.preventDefault();
-  const [file] = [...(event.dataTransfer?.files ?? [])];
-
-  if (!file) {
+async function bootstrapApp() {
+  if (typeof window === "undefined" || typeof document === "undefined") {
     return;
   }
 
-  openSettingsMenu();
-
-  try {
-    await importSelectedFile(file);
-  } catch (error) {
-    updateStatus(`拖拽导入失败：${error.message}`, "is-error");
-  }
-});
-
-async function bootstrapApp() {
+  renderInitializationState();
   await hydratePersistedState();
+  isInitializing = false;
   render();
 }
 
-void bootstrapApp();
+if (isClientRuntime) {
+  void bootstrapApp();
+}
