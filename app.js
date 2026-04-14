@@ -147,6 +147,11 @@ let currentLightboxUrl = "";
 let lightboxLongPressTimer = null;
 let pendingMediaHydrationFrame = 0;
 let isInitializing = true;
+let currentLightboxItems = [];
+let currentLightboxIndex = -1;
+let lightboxTouchStartX = 0;
+let lightboxTouchStartY = 0;
+let lightboxIgnoreClickUntil = 0;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
@@ -559,9 +564,11 @@ function renderPostList(container, posts, options = {}) {
     card.dataset.postId = post.id;
     time.textContent = post.timestamp;
     moreButton.dataset.postId = post.id;
+    card.classList.add("post-card-clickable");
     setPostText(text, post, truncateText);
     buildGallery(gallery, post.media, {
-      removeEmpty: true
+      removeEmpty: true,
+      postId: post.id
     });
     container.appendChild(fragment);
   });
@@ -594,7 +601,7 @@ function setPostText(node, post, truncateText = true) {
 }
 
 function buildGallery(container, media, options = {}) {
-  const { removeEmpty = false } = options;
+  const { removeEmpty = false, postId = "" } = options;
 
   container.innerHTML = "";
 
@@ -610,10 +617,13 @@ function buildGallery(container, media, options = {}) {
 
   container.classList.remove("is-hidden");
 
-  media.slice(0, 9).forEach((mediaItem) => {
+  media.slice(0, 9).forEach((mediaItem, mediaIndex) => {
     const item = document.createElement("div");
     item.className = "gallery-item";
-    renderGalleryItem(item, mediaItem);
+    renderGalleryItem(item, mediaItem, {
+      postId,
+      mediaIndex
+    });
     container.appendChild(item);
   });
 
@@ -791,7 +801,8 @@ function renderDetailPost(post) {
   elements.detailText.classList.toggle("is-empty", !optionalString(post.text));
   elements.detailText.textContent = optionalString(post.text) || "这条动态没有文字内容。";
   buildGallery(elements.detailGallery, post.media, {
-    removeEmpty: false
+    removeEmpty: false,
+    postId: post.id
   });
 }
 
@@ -801,12 +812,30 @@ function closeDetailView() {
   setView(targetView);
 }
 
-function openLightbox(url, filename = "dynamic-image.jpg") {
+function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], preferredIndex = 0) {
+  const normalizedItems = (Array.isArray(previewItems) ? previewItems : [])
+    .map((item) => ({
+      url: optionalString(item?.url),
+      filename: optionalString(item?.filename) || "dynamic-image.jpg"
+    }))
+    .filter((item) => item.url);
+
+  if (normalizedItems.length === 0 && url) {
+    normalizedItems.push({
+      url,
+      filename: filename || "dynamic-image.jpg"
+    });
+  }
+
+  const safeIndex = Number.isFinite(preferredIndex) ? preferredIndex : 0;
+  currentLightboxItems = normalizedItems;
+  currentLightboxIndex = Math.max(0, Math.min(normalizedItems.length - 1, safeIndex));
+  const activeItem = currentLightboxItems[currentLightboxIndex] || { url, filename };
   syncOverlayViewport();
-  currentLightboxUrl = url;
-  elements.lightboxImage.src = url;
-  elements.lightboxDownload.href = url;
-  elements.lightboxDownload.download = filename || "dynamic-image.jpg";
+  currentLightboxUrl = activeItem.url || "";
+  elements.lightboxImage.src = currentLightboxUrl;
+  elements.lightboxDownload.href = currentLightboxUrl;
+  elements.lightboxDownload.download = activeItem.filename || "dynamic-image.jpg";
   elements.lightboxView.classList.remove("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "false");
   refreshOverlayState();
@@ -816,10 +845,32 @@ function closeLightbox() {
   clearTimeout(lightboxLongPressTimer);
   lightboxLongPressTimer = null;
   currentLightboxUrl = "";
+  currentLightboxItems = [];
+  currentLightboxIndex = -1;
   elements.lightboxView.classList.add("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "true");
   elements.lightboxImage.removeAttribute("src");
   refreshOverlayState();
+}
+
+function switchLightboxImage(direction) {
+  if (currentLightboxItems.length <= 1) {
+    return;
+  }
+
+  const offset = direction === "prev" ? -1 : 1;
+  const nextIndex = currentLightboxIndex + offset;
+
+  if (nextIndex < 0 || nextIndex >= currentLightboxItems.length) {
+    return;
+  }
+
+  currentLightboxIndex = nextIndex;
+  const nextItem = currentLightboxItems[currentLightboxIndex];
+  currentLightboxUrl = nextItem.url;
+  elements.lightboxImage.src = nextItem.url;
+  elements.lightboxDownload.href = nextItem.url;
+  elements.lightboxDownload.download = nextItem.filename || "dynamic-image.jpg";
 }
 
 function saveCurrentLightboxImage() {
@@ -830,13 +881,50 @@ function saveCurrentLightboxImage() {
   elements.lightboxDownload.click();
 }
 
-function renderGalleryItem(node, mediaItem) {
+function handleLightboxTouchStart(event) {
+  const touch = event.touches?.[0];
+  if (!touch) {
+    return;
+  }
+
+  lightboxTouchStartX = touch.clientX;
+  lightboxTouchStartY = touch.clientY;
+}
+
+function handleLightboxTouchEnd(event) {
+  const touch = event.changedTouches?.[0];
+  if (!touch) {
+    return;
+  }
+
+  const deltaX = touch.clientX - lightboxTouchStartX;
+  const deltaY = touch.clientY - lightboxTouchStartY;
+  const absX = Math.abs(deltaX);
+  const absY = Math.abs(deltaY);
+
+  if (absX < 44 || absX <= absY) {
+    return;
+  }
+
+  if (deltaX < 0) {
+    switchLightboxImage("next");
+  } else {
+    switchLightboxImage("prev");
+  }
+
+  lightboxIgnoreClickUntil = Date.now() + 280;
+}
+
+function renderGalleryItem(node, mediaItem, context = {}) {
   if (!mediaItem.lookupKey && !mediaItem.url && !mediaItem.filename) {
     return;
   }
 
+  node.dataset.postId = optionalString(context.postId);
+  node.dataset.mediaIndex = String(Number.isFinite(context.mediaIndex) ? context.mediaIndex : -1);
+
   if (mediaItem.url) {
-    mountResolvedMedia(node, mediaItem, mediaItem.url);
+    mountResolvedMedia(node, mediaItem, mediaItem.url, context);
     return;
   }
 
@@ -910,7 +998,10 @@ async function hydrateMediaNode(node) {
     return;
   }
 
-  mountResolvedMedia(node, mediaItem, url);
+  mountResolvedMedia(node, mediaItem, url, {
+    postId: node.dataset.postId,
+    mediaIndex: Number(node.dataset.mediaIndex)
+  });
 }
 
 async function resolveMediaUrl(mediaItem) {
@@ -983,7 +1074,7 @@ function normalizeMediaKeyCandidate(value, asBaseName) {
   return base.toLowerCase();
 }
 
-function mountResolvedMedia(node, mediaItem, url) {
+function mountResolvedMedia(node, mediaItem, url, context = {}) {
   node.classList.remove("is-pending");
   node.innerHTML = "";
 
@@ -1010,7 +1101,23 @@ function mountResolvedMedia(node, mediaItem, url) {
   image.className = "previewable-image";
   image.dataset.previewSrc = url;
   image.dataset.filename = mediaItem.filename || "dynamic-image.jpg";
+  image.dataset.postId = optionalString(context.postId);
+  image.dataset.mediaIndex = String(Number.isFinite(context.mediaIndex) ? context.mediaIndex : -1);
   node.appendChild(image);
+}
+
+function collectPreviewImagesFromCard(imageElement) {
+  const card = imageElement.closest(".post-card");
+  if (!card) {
+    return [];
+  }
+
+  return [...card.querySelectorAll(".previewable-image")]
+    .map((node) => ({
+      url: node.dataset.previewSrc || node.currentSrc || "",
+      filename: node.dataset.filename || "dynamic-image.jpg"
+    }))
+    .filter((item) => item.url);
 }
 
 function clearZipMediaContext() {
@@ -1474,21 +1581,36 @@ function handlePostAction(event) {
 
   const previewImage = eventElement.closest(".previewable-image");
   if (previewImage) {
-    openLightbox(previewImage.dataset.previewSrc || previewImage.currentSrc, previewImage.dataset.filename);
+    const previewItems = collectPreviewImagesFromCard(previewImage);
+    const activeUrl = previewImage.dataset.previewSrc || previewImage.currentSrc || "";
+    const preferredIndex = previewItems.findIndex((item) => item.url === activeUrl);
+    openLightbox(activeUrl, previewImage.dataset.filename, previewItems, preferredIndex >= 0 ? preferredIndex : 0);
     return;
   }
 
   const trigger = eventElement.closest(".more-button, .expand-link");
-  if (!trigger) {
+  if (trigger) {
+    const postId = trigger.dataset.postId || trigger.closest(".post-card")?.dataset.postId;
+    if (!postId) {
+      return;
+    }
+
+    const returnView = trigger.closest("#searchResults") ? "search" : "home";
+    openDetailView(postId, returnView);
     return;
   }
 
-  const postId = trigger.dataset.postId || trigger.closest(".post-card")?.dataset.postId;
+  if (eventElement.closest("video, a, button")) {
+    return;
+  }
+
+  const card = eventElement.closest(".post-card");
+  const postId = card?.dataset.postId;
   if (!postId) {
     return;
   }
 
-  const returnView = trigger.closest("#searchResults") ? "search" : "home";
+  const returnView = card.closest("#searchResults") ? "search" : "home";
   openDetailView(postId, returnView);
 }
 
@@ -1558,16 +1680,24 @@ if (isClientRuntime) {
   elements.profileEditForm.addEventListener("submit", saveProfileDetails);
   elements.searchInput.addEventListener("input", updateSearchResults);
   elements.detailBackButton.addEventListener("click", closeDetailView);
-  elements.lightboxClose.addEventListener("click", closeLightbox);
-  elements.lightboxView.addEventListener("click", (event) => {
-    if (event.target === elements.lightboxView) {
-      closeLightbox();
-    }
+  elements.lightboxClose.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeLightbox();
   });
-  elements.lightboxDownload.addEventListener("click", () => {
+  elements.lightboxView.addEventListener("click", () => {
+    if (Date.now() < lightboxIgnoreClickUntil) {
+      return;
+    }
+
+    closeLightbox();
+  });
+  elements.lightboxDownload.addEventListener("click", (event) => {
+    event.stopPropagation();
     clearTimeout(lightboxLongPressTimer);
     lightboxLongPressTimer = null;
   });
+  elements.lightboxView.addEventListener("touchstart", handleLightboxTouchStart, { passive: true });
+  elements.lightboxView.addEventListener("touchend", handleLightboxTouchEnd, { passive: true });
   elements.lightboxImage.addEventListener(
     "touchstart",
     () => {
