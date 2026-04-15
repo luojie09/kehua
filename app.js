@@ -110,6 +110,7 @@ const elements = {
   constellationInput: document.getElementById("constellationInput"),
   ipInput: document.getElementById("ipInput"),
   lightboxView: document.getElementById("lightboxView"),
+  lightboxStage: document.getElementById("lightboxStage"),
   lightboxClose: document.getElementById("lightboxClose"),
   lightboxDownload: document.getElementById("lightboxDownload"),
   lightboxImage: document.getElementById("lightboxImage"),
@@ -152,6 +153,7 @@ let currentLightboxIndex = -1;
 let lightboxTouchStartX = 0;
 let lightboxTouchStartY = 0;
 let lightboxIgnoreClickUntil = 0;
+let lightboxRenderToken = 0;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
@@ -812,30 +814,89 @@ function closeDetailView() {
   setView(targetView);
 }
 
-function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], preferredIndex = 0) {
+function normalizeLightboxItems(url, filename = "dynamic-image.jpg", previewItems = []) {
   const normalizedItems = (Array.isArray(previewItems) ? previewItems : [])
     .map((item) => ({
       url: optionalString(item?.url),
       filename: optionalString(item?.filename) || "dynamic-image.jpg"
     }))
-    .filter((item) => item.url);
+    .filter((item) => isUsablePreviewUrl(item.url));
 
-  if (normalizedItems.length === 0 && url) {
-    normalizedItems.push({
-      url,
-      filename: filename || "dynamic-image.jpg"
-    });
+  if (normalizedItems.length > 0) {
+    return normalizedItems;
+  }
+
+  const fallbackUrl = optionalString(url);
+  if (!fallbackUrl) {
+    return [];
+  }
+
+  return [
+    {
+      url: fallbackUrl,
+      filename: optionalString(filename) || "dynamic-image.jpg"
+    }
+  ].filter((item) => isUsablePreviewUrl(item.url));
+}
+
+function setLightboxDownloadTarget(url, filename = "dynamic-image.jpg") {
+  elements.lightboxDownload.dataset.url = optionalString(url);
+  elements.lightboxDownload.dataset.filename = optionalString(filename) || "dynamic-image.jpg";
+}
+
+function renderActiveLightboxItem() {
+  const activeItem = currentLightboxItems[currentLightboxIndex];
+  const resolvedUrl = optionalString(activeItem?.url);
+
+  if (!resolvedUrl) {
+    return false;
+  }
+
+  const renderToken = ++lightboxRenderToken;
+  currentLightboxUrl = resolvedUrl;
+  elements.lightboxImage.style.visibility = "hidden";
+  elements.lightboxImage.loading = "eager";
+  elements.lightboxImage.decoding = "sync";
+  elements.lightboxImage.onerror = () => {
+    if (renderToken !== lightboxRenderToken) {
+      return;
+    }
+
+    currentLightboxUrl = "";
+    elements.lightboxImage.style.visibility = "hidden";
+    updateStatus("图片预览失败：图片资源无法读取。", "is-error");
+  };
+  elements.lightboxImage.onload = () => {
+    if (renderToken !== lightboxRenderToken) {
+      return;
+    }
+
+    elements.lightboxImage.style.visibility = "visible";
+  };
+  elements.lightboxImage.src = resolvedUrl;
+  elements.lightboxImage.alt = activeItem?.filename || "preview-image";
+  setLightboxDownloadTarget(resolvedUrl, activeItem?.filename);
+  return true;
+}
+
+function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], preferredIndex = 0) {
+  const normalizedItems = normalizeLightboxItems(url, filename, previewItems);
+
+  if (normalizedItems.length === 0) {
+    updateStatus("图片预览失败：未找到有效图片地址。", "is-error");
+    return;
   }
 
   const safeIndex = Number.isFinite(preferredIndex) ? preferredIndex : 0;
   currentLightboxItems = normalizedItems;
   currentLightboxIndex = Math.max(0, Math.min(normalizedItems.length - 1, safeIndex));
-  const activeItem = currentLightboxItems[currentLightboxIndex] || { url, filename };
+
+  if (!renderActiveLightboxItem()) {
+    updateStatus("图片预览失败：无法加载图片。", "is-error");
+    return;
+  }
+
   syncOverlayViewport();
-  currentLightboxUrl = activeItem.url || "";
-  elements.lightboxImage.src = currentLightboxUrl;
-  elements.lightboxDownload.href = currentLightboxUrl;
-  elements.lightboxDownload.download = activeItem.filename || "dynamic-image.jpg";
   elements.lightboxView.classList.remove("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "false");
   refreshOverlayState();
@@ -844,41 +905,52 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
 function closeLightbox() {
   clearTimeout(lightboxLongPressTimer);
   lightboxLongPressTimer = null;
+  lightboxRenderToken += 1;
   currentLightboxUrl = "";
   currentLightboxItems = [];
   currentLightboxIndex = -1;
   elements.lightboxView.classList.add("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "true");
   elements.lightboxImage.removeAttribute("src");
+  elements.lightboxImage.style.visibility = "hidden";
+  elements.lightboxImage.onload = null;
+  elements.lightboxImage.onerror = null;
+  elements.lightboxImage.alt = "preview-image";
+  setLightboxDownloadTarget("", "dynamic-image.jpg");
   refreshOverlayState();
 }
 
 function switchLightboxImage(direction) {
   if (currentLightboxItems.length <= 1) {
-    return;
+    return false;
   }
 
   const offset = direction === "prev" ? -1 : 1;
   const nextIndex = currentLightboxIndex + offset;
 
   if (nextIndex < 0 || nextIndex >= currentLightboxItems.length) {
-    return;
+    return false;
   }
 
   currentLightboxIndex = nextIndex;
-  const nextItem = currentLightboxItems[currentLightboxIndex];
-  currentLightboxUrl = nextItem.url;
-  elements.lightboxImage.src = nextItem.url;
-  elements.lightboxDownload.href = nextItem.url;
-  elements.lightboxDownload.download = nextItem.filename || "dynamic-image.jpg";
+  return renderActiveLightboxItem();
 }
 
 function saveCurrentLightboxImage() {
-  if (!currentLightboxUrl) {
+  const downloadUrl = optionalString(elements.lightboxDownload.dataset.url) || currentLightboxUrl;
+  const downloadName = optionalString(elements.lightboxDownload.dataset.filename) || "dynamic-image.jpg";
+
+  if (!downloadUrl) {
     return;
   }
 
-  elements.lightboxDownload.click();
+  const anchor = document.createElement("a");
+  anchor.href = downloadUrl;
+  anchor.download = downloadName;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function handleLightboxTouchStart(event) {
@@ -906,13 +978,10 @@ function handleLightboxTouchEnd(event) {
     return;
   }
 
-  if (deltaX < 0) {
-    switchLightboxImage("next");
-  } else {
-    switchLightboxImage("prev");
+  const switched = deltaX < 0 ? switchLightboxImage("next") : switchLightboxImage("prev");
+  if (switched) {
+    lightboxIgnoreClickUntil = Date.now() + 280;
   }
-
-  lightboxIgnoreClickUntil = Date.now() + 280;
 }
 
 function renderGalleryItem(node, mediaItem, context = {}) {
@@ -1114,10 +1183,60 @@ function collectPreviewImagesFromCard(imageElement) {
 
   return [...card.querySelectorAll(".previewable-image")]
     .map((node) => ({
-      url: node.dataset.previewSrc || node.currentSrc || "",
+      url: getPreviewImageUrl(node),
       filename: node.dataset.filename || "dynamic-image.jpg"
     }))
     .filter((item) => item.url);
+}
+
+function isUsablePreviewUrl(value) {
+  const raw = optionalString(value);
+  if (!raw) {
+    return false;
+  }
+
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    const current = new URL(window.location.href);
+
+    if (resolved.href === current.href) {
+      return false;
+    }
+
+    const pathname = resolved.pathname.toLowerCase();
+    if (pathname.endsWith(".html") || pathname.endsWith(".htm")) {
+      return false;
+    }
+  } catch (error) {
+    return false;
+  }
+
+  return true;
+}
+
+function getPreviewImageUrl(imageElement) {
+  if (!imageElement) {
+    return "";
+  }
+
+  const candidates = [
+    optionalString(imageElement.dataset?.previewSrc),
+    optionalString(imageElement.currentSrc),
+    optionalString(imageElement.getAttribute("src")),
+    optionalString(imageElement.src)
+  ];
+
+  for (const candidate of candidates) {
+    if (isUsablePreviewUrl(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
 }
 
 function clearZipMediaContext() {
@@ -1582,7 +1701,7 @@ function handlePostAction(event) {
   const previewImage = eventElement.closest(".previewable-image");
   if (previewImage) {
     const previewItems = collectPreviewImagesFromCard(previewImage);
-    const activeUrl = previewImage.dataset.previewSrc || previewImage.currentSrc || "";
+    const activeUrl = getPreviewImageUrl(previewImage);
     const preferredIndex = previewItems.findIndex((item) => item.url === activeUrl);
     openLightbox(activeUrl, previewImage.dataset.filename, previewItems, preferredIndex >= 0 ? preferredIndex : 0);
     return;
@@ -1693,11 +1812,14 @@ if (isClientRuntime) {
   });
   elements.lightboxDownload.addEventListener("click", (event) => {
     event.stopPropagation();
-    clearTimeout(lightboxLongPressTimer);
-    lightboxLongPressTimer = null;
+    event.preventDefault();
+    saveCurrentLightboxImage();
   });
   elements.lightboxView.addEventListener("touchstart", handleLightboxTouchStart, { passive: true });
   elements.lightboxView.addEventListener("touchend", handleLightboxTouchEnd, { passive: true });
+  elements.lightboxImage.addEventListener("error", () => {
+    updateStatus("图片预览失败：图片资源无法读取。", "is-error");
+  });
   elements.lightboxImage.addEventListener(
     "touchstart",
     () => {
