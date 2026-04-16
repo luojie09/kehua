@@ -702,7 +702,7 @@ function setPostText(node, post, truncateText = true) {
 }
 
 function buildGallery(container, media, options = {}) {
-  const { removeEmpty = false, postId = "" } = options;
+  const { removeEmpty = false, postId = "", eagerHydrate = false } = options;
 
   container.innerHTML = "";
 
@@ -723,10 +723,18 @@ function buildGallery(container, media, options = {}) {
     item.className = "gallery-item";
     renderGalleryItem(item, mediaItem, {
       postId,
-      mediaIndex
+      mediaIndex,
+      eagerHydrate
     });
     container.appendChild(item);
   });
+
+  if (eagerHydrate) {
+    container.querySelectorAll(".gallery-item.is-pending").forEach((node) => {
+      void hydrateMediaNode(node);
+    });
+    return;
+  }
 
   schedulePendingMediaHydration();
 }
@@ -903,7 +911,8 @@ function renderDetailPost(post) {
   elements.detailText.textContent = optionalString(post.text) || "这条动态没有文字内容。";
   buildGallery(elements.detailGallery, post.media, {
     removeEmpty: false,
-    postId: post.id
+    postId: post.id,
+    eagerHydrate: true
   });
 }
 
@@ -1088,6 +1097,7 @@ function renderGalleryItem(node, mediaItem, context = {}) {
 
   node.dataset.postId = optionalString(context.postId);
   node.dataset.mediaIndex = String(Number.isFinite(context.mediaIndex) ? context.mediaIndex : -1);
+  node.dataset.eagerHydrate = context.eagerHydrate ? "true" : "false";
 
   if (mediaItem.url) {
     mountResolvedMedia(node, mediaItem, mediaItem.url, context);
@@ -1098,6 +1108,11 @@ function renderGalleryItem(node, mediaItem, context = {}) {
   node.dataset.lookupKey = mediaItem.lookupKey;
   node.dataset.mediaType = mediaItem.type;
   node.dataset.filename = mediaItem.filename;
+
+  if (context.eagerHydrate) {
+    void hydrateMediaNode(node);
+    return;
+  }
 
   if (node.isConnected) {
     observeMediaNode(node);
