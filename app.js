@@ -854,28 +854,27 @@ function renderActiveLightboxItem() {
 
   const renderToken = ++lightboxRenderToken;
   currentLightboxUrl = resolvedUrl;
-  elements.lightboxImage.style.visibility = "hidden";
+  setLightboxDownloadTarget(resolvedUrl, activeItem?.filename);
+
+  // Reset first to guarantee rerender even when URL repeats.
+  elements.lightboxImage.removeAttribute("src");
   elements.lightboxImage.loading = "eager";
-  elements.lightboxImage.decoding = "sync";
+  elements.lightboxImage.decoding = "async";
   elements.lightboxImage.onerror = () => {
     if (renderToken !== lightboxRenderToken) {
       return;
     }
 
     currentLightboxUrl = "";
-    elements.lightboxImage.style.visibility = "hidden";
     updateStatus("图片预览失败：图片资源无法读取。", "is-error");
   };
   elements.lightboxImage.onload = () => {
     if (renderToken !== lightboxRenderToken) {
       return;
     }
-
-    elements.lightboxImage.style.visibility = "visible";
   };
   elements.lightboxImage.src = resolvedUrl;
   elements.lightboxImage.alt = activeItem?.filename || "preview-image";
-  setLightboxDownloadTarget(resolvedUrl, activeItem?.filename);
   return true;
 }
 
@@ -912,7 +911,6 @@ function closeLightbox() {
   elements.lightboxView.classList.add("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "true");
   elements.lightboxImage.removeAttribute("src");
-  elements.lightboxImage.style.visibility = "hidden";
   elements.lightboxImage.onload = null;
   elements.lightboxImage.onerror = null;
   elements.lightboxImage.alt = "preview-image";
