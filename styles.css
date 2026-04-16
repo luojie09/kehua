@@ -145,10 +145,10 @@ button {
   position: relative;
   margin-top: -28px;
   border-radius: 36px 36px 0 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.985) 0%, #f7f8fb 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%);
   padding: 0 16px calc(104px + env(safe-area-inset-bottom));
   min-height: calc(100vh - 356px);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .content-sheet::before {
@@ -159,8 +159,9 @@ button {
   right: 0;
   height: 48px;
   border-radius: 36px 36px 0 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.985) 0%, #f7f8fb 100%);
+  background: #ffffff;
   pointer-events: none;
+  z-index: 0;
 }
 
 .avatar-wrap {
@@ -170,6 +171,7 @@ button {
   width: 112px;
   height: 112px;
   transform: translateX(-50%);
+  z-index: 2;
 }
 
 .avatar-wrap::before {
