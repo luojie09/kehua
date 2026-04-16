@@ -80,6 +80,8 @@ const profilePreferences = isClientRuntime
 
 const elements = {
   phoneScreen: document.getElementById("phoneScreen"),
+  fastScroller: document.getElementById("fastScroller"),
+  fastScrollerThumb: document.getElementById("fastScrollerThumb"),
   coverImage: document.getElementById("coverImage"),
   coverInput: document.getElementById("coverInput"),
   coverEditButton: document.getElementById("coverEditButton"),
@@ -154,6 +156,8 @@ let lightboxTouchStartX = 0;
 let lightboxTouchStartY = 0;
 let lightboxIgnoreClickUntil = 0;
 let lightboxRenderToken = 0;
+let fastScrollerHideTimer = null;
+let isFastScrollerDragging = false;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
@@ -496,6 +500,100 @@ function refreshOverlayState() {
   }
 
   elements.phoneScreen.classList.toggle("is-overlay-active", hasOverlay);
+  elements.fastScroller.classList.toggle("is-hidden", hasOverlay);
+}
+
+function clearFastScrollerHideTimer() {
+  if (!fastScrollerHideTimer) {
+    return;
+  }
+
+  window.clearTimeout(fastScrollerHideTimer);
+  fastScrollerHideTimer = null;
+}
+
+function showFastScrollerTemporarily() {
+  if (activeView !== "home") {
+    return;
+  }
+
+  clearFastScrollerHideTimer();
+  elements.fastScroller.classList.add("is-visible");
+
+  if (isFastScrollerDragging) {
+    return;
+  }
+
+  fastScrollerHideTimer = window.setTimeout(() => {
+    elements.fastScroller.classList.remove("is-visible");
+    fastScrollerHideTimer = null;
+  }, 900);
+}
+
+function updateFastScrollerThumb() {
+  const scrollableHeight =
+    elements.phoneScreen.scrollHeight - elements.phoneScreen.clientHeight;
+  const trackHeight = elements.fastScroller.clientHeight;
+  const thumbHeight = elements.fastScrollerThumb.offsetHeight || 56;
+  const maxThumbOffset = Math.max(trackHeight - thumbHeight, 0);
+
+  if (scrollableHeight <= 0 || maxThumbOffset <= 0) {
+    elements.fastScroller.classList.add("is-hidden");
+    elements.fastScrollerThumb.style.top = "0px";
+    return;
+  }
+
+  if (activeView !== "home") {
+    return;
+  }
+
+  elements.fastScroller.classList.remove("is-hidden");
+  const progress = elements.phoneScreen.scrollTop / scrollableHeight;
+  const thumbOffset = maxThumbOffset * progress;
+  elements.fastScrollerThumb.style.top = `${thumbOffset}px`;
+}
+
+function scrollWithFastScroller(clientY) {
+  const rect = elements.fastScroller.getBoundingClientRect();
+  const scrollableHeight =
+    elements.phoneScreen.scrollHeight - elements.phoneScreen.clientHeight;
+
+  if (scrollableHeight <= 0 || rect.height <= 0) {
+    return;
+  }
+
+  const relativeY = Math.min(Math.max(clientY - rect.top, 0), rect.height);
+  const progress = relativeY / rect.height;
+  const targetY = scrollableHeight * progress;
+  elements.phoneScreen.scrollTo({ top: targetY, behavior: "auto" });
+  updateFastScrollerThumb();
+}
+
+function handleFastScrollerPointerStart(clientY) {
+  if (activeView !== "home") {
+    return;
+  }
+
+  isFastScrollerDragging = true;
+  showFastScrollerTemporarily();
+  scrollWithFastScroller(clientY);
+}
+
+function handleFastScrollerPointerMove(clientY) {
+  if (!isFastScrollerDragging) {
+    return;
+  }
+
+  scrollWithFastScroller(clientY);
+}
+
+function handleFastScrollerPointerEnd() {
+  if (!isFastScrollerDragging) {
+    return;
+  }
+
+  isFastScrollerDragging = false;
+  showFastScrollerTemporarily();
 }
 
 function render() {
@@ -533,6 +631,7 @@ function render() {
   renderCurrentDetailIfNeeded();
   updateImportSummary();
   elements.initLoading.classList.remove("is-visible");
+  updateFastScrollerThumb();
   persistData();
 }
 
@@ -1767,6 +1866,55 @@ function clearCurrentSession() {
 }
 
 if (isClientRuntime) {
+  elements.phoneScreen.addEventListener("scroll", () => {
+    updateFastScrollerThumb();
+    showFastScrollerTemporarily();
+  });
+  elements.fastScroller.addEventListener("mouseenter", () => {
+    showFastScrollerTemporarily();
+  });
+  elements.fastScroller.addEventListener("mouseleave", () => {
+    if (!isFastScrollerDragging) {
+      elements.fastScroller.classList.remove("is-visible");
+    }
+  });
+  elements.fastScroller.addEventListener("touchstart", (event) => {
+    const touch = event.touches?.[0];
+    if (!touch) {
+      return;
+    }
+
+    event.preventDefault();
+    handleFastScrollerPointerStart(touch.clientY);
+  }, { passive: false });
+  elements.fastScroller.addEventListener("touchmove", (event) => {
+    const touch = event.touches?.[0];
+    if (!touch) {
+      return;
+    }
+
+    event.preventDefault();
+    handleFastScrollerPointerMove(touch.clientY);
+  }, { passive: false });
+  elements.fastScroller.addEventListener("touchend", () => {
+    handleFastScrollerPointerEnd();
+  });
+  elements.fastScroller.addEventListener("touchcancel", () => {
+    handleFastScrollerPointerEnd();
+  });
+  elements.fastScroller.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    handleFastScrollerPointerStart(event.clientY);
+  });
+  window.addEventListener("mousemove", (event) => {
+    handleFastScrollerPointerMove(event.clientY);
+  });
+  window.addEventListener("mouseup", () => {
+    handleFastScrollerPointerEnd();
+  });
+  window.addEventListener("resize", () => {
+    updateFastScrollerThumb();
+  });
   elements.settingsButton.addEventListener("click", toggleSettingsMenu);
   elements.settingsClose.addEventListener("click", closeSettingsMenu);
   elements.settingsBackdrop.addEventListener("click", closeSettingsMenu);

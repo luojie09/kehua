@@ -83,7 +83,7 @@ button {
 }
 
 .top-bar {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
@@ -143,11 +143,24 @@ button {
 
 .content-sheet {
   position: relative;
-  margin-top: -12px;
+  margin-top: -28px;
   border-radius: 36px 36px 0 0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.985) 0%, #f7f8fb 100%);
   padding: 0 16px calc(104px + env(safe-area-inset-bottom));
   min-height: calc(100vh - 356px);
+  overflow: hidden;
+}
+
+.content-sheet::before {
+  content: "";
+  position: absolute;
+  top: -24px;
+  left: 0;
+  right: 0;
+  height: 48px;
+  border-radius: 36px 36px 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.985) 0%, #f7f8fb 100%);
+  pointer-events: none;
 }
 
 .avatar-wrap {
@@ -408,6 +421,51 @@ button {
   padding: 12px 62px calc(12px + env(safe-area-inset-bottom));
   background: rgba(255, 255, 255, 0.97);
   border-top: 1px solid var(--line);
+}
+
+.fast-scroller {
+  position: fixed;
+  right: 0;
+  top: 20dvh;
+  width: 24px;
+  height: 60dvh;
+  z-index: 52;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 160ms ease;
+}
+
+.fast-scroller.is-visible {
+  opacity: 1;
+}
+
+.fast-scroller-track {
+  position: relative;
+  width: 4px;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(15, 23, 40, 0.08);
+  backdrop-filter: blur(6px);
+}
+
+.fast-scroller-thumb {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 56px;
+  border-radius: 999px;
+  background: rgba(15, 23, 40, 0.52);
+  box-shadow: 0 8px 20px rgba(15, 23, 40, 0.18);
+  transform: translateX(-50%);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.fast-scroller.is-visible .fast-scroller-thumb {
+  background: rgba(15, 23, 40, 0.68);
 }
 
 .nav-item {
