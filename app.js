@@ -181,6 +181,69 @@ function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
 }
 
+function getSafeErrorMessage(error, fallback = "解析发生未知错误") {
+  if (typeof error === "string") {
+    return optionalString(error) || fallback;
+  }
+
+  return optionalString(error?.message) || fallback;
+}
+
+function decodeArchiveTextBytes(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (utf8Error) {
+    try {
+      return new TextDecoder("gbk").decode(bytes);
+    } catch (gbkError) {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+  }
+}
+
+async function decodeArchiveTextEntry(zipEntry) {
+  const bytes = await zipEntry.async("uint8array");
+  return decodeArchiveTextBytes(bytes).replace(/^\uFEFF/, "");
+}
+
+function maybeDecodeZipEntryName(pathname) {
+  const rawName = optionalString(pathname);
+  if (!rawName) {
+    return "";
+  }
+
+  const normalized = rawName.replace(/\\/g, "/");
+  if (/[\u4e00-\u9fff]/.test(normalized)) {
+    return normalized;
+  }
+
+  const latin1Bytes = Uint8Array.from(Array.from(normalized, (char) => char.charCodeAt(0) & 0xff));
+
+  try {
+    const utf8Decoded = new TextDecoder("utf-8", { fatal: true }).decode(latin1Bytes);
+    if (utf8Decoded && !utf8Decoded.includes("\u0000")) {
+      return utf8Decoded.replace(/\\/g, "/");
+    }
+  } catch (error) {
+    // Best-effort fallback below.
+  }
+
+  try {
+    const gbkDecoded = new TextDecoder("gbk").decode(latin1Bytes);
+    if (gbkDecoded && !gbkDecoded.includes("\u0000")) {
+      return gbkDecoded.replace(/\\/g, "/");
+    }
+  } catch (error) {
+    // Keep original name when decoding fallback is unavailable.
+  }
+
+  return normalized;
+}
+
+function getArchiveEntryName(entry) {
+  return normalizeArchivePath(entry?.name);
+}
+
 function getModalDepthFromState(state) {
   if (!state || typeof state !== "object") {
     return 0;
@@ -345,7 +408,7 @@ function handlePopState(event) {
 
 function trackImportError(error) {
   window.posthog.capture("import_error", {
-    error_reason: optionalString(error?.message) || "鏈煡閿欒"
+    error_reason: getSafeErrorMessage(error)
   });
 }
 
@@ -1725,7 +1788,7 @@ function applyJsonString(jsonText) {
     updateStatus("\u8c03\u8bd5 JSON \u5df2\u5e94\u7528\u3002", "is-success");
   } catch (error) {
     trackImportError(error);
-    updateStatus(`JSON 瑙ｆ瀽澶辫触锛?{error.message}`, "is-error");
+    updateStatus(`JSON 解析失败：${getSafeErrorMessage(error)}`, "is-error");
   }
 }
 
@@ -1790,7 +1853,7 @@ async function importZipArchive(file) {
     );
   } catch (error) {
     trackImportError(error);
-    updateStatus(`ZIP 瀵煎叆澶辫触锛?{error.message}`, "is-error");
+    updateStatus(`ZIP 导入失败：${getSafeErrorMessage(error)}`, "is-error");
   } finally {
     toggleBusyState(false);
     elements.fileInput.value = "";
@@ -1801,8 +1864,8 @@ async function parseKehuaArchive(file) {
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const entries = Object.values(zip.files).filter((entry) => !entry.dir);
   const textEntries = entries
-    .filter((entry) => isArchiveDynamicTextPath(entry.name))
-    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+    .filter((entry) => isArchiveDynamicTextPath(getArchiveEntryName(entry)))
+    .sort((left, right) => getArchiveEntryName(left).localeCompare(getArchiveEntryName(right), "zh-CN"));
 
   if (textEntries.length === 0) {
     throw new Error(
@@ -1812,7 +1875,7 @@ async function parseKehuaArchive(file) {
 
   const mediaEntries = new Map();
   entries.forEach((entry) => {
-    const filename = normalizeMediaFilename(entry.name);
+    const filename = normalizeMediaFilename(getArchiveEntryName(entry));
 
     if (!isSupportedMediaFile(filename)) {
       return;
@@ -1827,13 +1890,13 @@ async function parseKehuaArchive(file) {
   const posts = [];
 
   for (const textEntry of textEntries) {
-    const year = extractYearValue(textEntry.name);
+    const year = extractYearValue(getArchiveEntryName(textEntry));
     if (year) {
       years.add(year);
     }
 
-    const content = await textEntry.async("text");
-    posts.push(...parseDynamicText(content, mediaEntries, textEntry.name));
+    const content = await decodeArchiveTextEntry(textEntry);
+    posts.push(...parseDynamicText(content, mediaEntries, getArchiveEntryName(textEntry)));
   }
 
   posts.sort((left, right) => right.sortTime - left.sortTime);
@@ -1971,7 +2034,7 @@ function formatYearSummary(years) {
 
 function extractProfileName(entries, archiveName) {
   const topLevelCandidates = [
-    ...new Set(entries.map((entry) => normalizeArchivePath(entry.name).split("/")[0]).filter(Boolean)),
+    ...new Set(entries.map((entry) => getArchiveEntryName(entry).split("/")[0]).filter(Boolean)),
     archiveName.replace(/\.zip$/i, "")
   ];
 
@@ -2004,7 +2067,7 @@ function baseName(pathname) {
 }
 
 function normalizeArchivePath(pathname) {
-  return pathname.replace(/\\/g, "/");
+  return maybeDecodeZipEntryName(pathname).replace(/\\/g, "/");
 }
 
 function resetProfilePreferences() {
@@ -2035,7 +2098,7 @@ async function hydratePersistedState() {
   } catch (error) {
     console.warn("Failed to read persisted IndexedDB state.", error);
     window.posthog.capture("indexeddb_read_fail", {
-      error_reason: optionalString(error?.message) || "鏈煡閿欒"
+      error_reason: getSafeErrorMessage(error)
     });
     return;
   }
@@ -2322,7 +2385,7 @@ if (isClientRuntime) {
       await importSelectedFile(file);
     } catch (error) {
       trackImportError(error);
-      updateStatus(`璇诲彇鏂囦欢澶辫触锛?{error.message}`, "is-error");
+      updateStatus(`读取文件失败：${getSafeErrorMessage(error)}`, "is-error");
     } finally {
       elements.fileInput.value = "";
     }
@@ -2352,7 +2415,7 @@ if (isClientRuntime) {
       await importSelectedFile(file);
     } catch (error) {
       trackImportError(error);
-      updateStatus(`鎷栨嫿瀵煎叆澶辫触锛?{error.message}`, "is-error");
+      updateStatus(`拖拽导入失败：${getSafeErrorMessage(error)}`, "is-error");
     }
   });
 }
