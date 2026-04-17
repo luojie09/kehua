@@ -173,9 +173,174 @@ let lightboxRenderToken = 0;
 let fastScrollerHideTimer = null;
 let isFastScrollerDragging = false;
 let pendingImportSuccessPayload = null;
+let modalHistoryDepth = 0;
+let modalHistorySequence = 0;
+let suppressNextPopstateClose = false;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
+}
+
+function getModalDepthFromState(state) {
+  if (!state || typeof state !== "object") {
+    return 0;
+  }
+
+  const depth = Number(state.__kehuaModalDepth);
+  return Number.isFinite(depth) && depth >= 0 ? depth : 0;
+}
+
+function ensureHistoryStateInitialized() {
+  if (!isClientRuntime) {
+    return;
+  }
+
+  const currentState = window.history.state;
+  const nextDepth = getModalDepthFromState(currentState);
+
+  modalHistoryDepth = nextDepth;
+
+  if (currentState?.__kehuaApp) {
+    return;
+  }
+
+  window.history.replaceState(
+    {
+      ...(currentState && typeof currentState === "object" ? currentState : {}),
+      __kehuaApp: true,
+      __kehuaModalDepth: nextDepth
+    },
+    "",
+    window.location.href
+  );
+}
+
+function pushModalHistoryEntry(type) {
+  if (!isClientRuntime) {
+    return;
+  }
+
+  ensureHistoryStateInitialized();
+  modalHistoryDepth += 1;
+  modalHistorySequence += 1;
+  window.history.pushState(
+    {
+      __kehuaApp: true,
+      __kehuaModal: type,
+      __kehuaModalDepth: modalHistoryDepth,
+      __kehuaModalSeq: modalHistorySequence
+    },
+    "",
+    window.location.href
+  );
+}
+
+function syncManualCloseWithHistory(closeFn) {
+  closeFn();
+
+  if (!isClientRuntime || modalHistoryDepth <= 0) {
+    return;
+  }
+
+  suppressNextPopstateClose = true;
+  window.history.back();
+}
+
+function getTopOverlayType() {
+  if (!elements.lightboxView.classList.contains("is-hidden")) {
+    return "lightbox";
+  }
+
+  if (activeView === "detail") {
+    return "detail";
+  }
+
+  if (activeView === "profileEdit") {
+    return "profileEdit";
+  }
+
+  if (activeView === "search") {
+    return "search";
+  }
+
+  if (!elements.settingsMenu.classList.contains("is-hidden")) {
+    return "settings";
+  }
+
+  return "";
+}
+
+function closeTopOverlayFromHistory() {
+  const topOverlayType = getTopOverlayType();
+
+  if (topOverlayType === "lightbox") {
+    closeLightbox({ fromHistory: true });
+    return true;
+  }
+
+  if (topOverlayType === "detail") {
+    closeDetailView({ fromHistory: true });
+    return true;
+  }
+
+  if (topOverlayType === "profileEdit") {
+    closeProfileEditView({ fromHistory: true });
+    return true;
+  }
+
+  if (topOverlayType === "search") {
+    closeSearchView({ fromHistory: true });
+    return true;
+  }
+
+  if (topOverlayType === "settings") {
+    closeSettingsMenu({ fromHistory: true });
+    return true;
+  }
+
+  return false;
+}
+
+function closeTopOverlayManually() {
+  const topOverlayType = getTopOverlayType();
+
+  if (topOverlayType === "lightbox") {
+    closeLightbox();
+    return true;
+  }
+
+  if (topOverlayType === "detail") {
+    closeDetailView();
+    return true;
+  }
+
+  if (topOverlayType === "profileEdit") {
+    closeProfileEditView();
+    return true;
+  }
+
+  if (topOverlayType === "search") {
+    closeSearchView();
+    return true;
+  }
+
+  if (topOverlayType === "settings") {
+    closeSettingsMenu();
+    return true;
+  }
+
+  return false;
+}
+
+function handlePopState(event) {
+  modalHistoryDepth = getModalDepthFromState(event.state);
+
+  if (suppressNextPopstateClose) {
+    suppressNextPopstateClose = false;
+    return;
+  }
+
+  closeTopOverlayFromHistory();
 }
 
 function trackImportError(error) {
@@ -492,18 +657,37 @@ function toggleBusyState(isBusy) {
 }
 
 function openSettingsMenu() {
+  if (!elements.settingsMenu.classList.contains("is-hidden")) {
+    return;
+  }
+
   syncOverlayViewport();
   elements.settingsMenu.classList.remove("is-hidden");
   elements.settingsBackdrop.classList.remove("is-hidden");
   elements.settingsMenu.setAttribute("aria-hidden", "false");
   refreshOverlayState();
+  pushModalHistoryEntry("settings");
 }
 
-function closeSettingsMenu() {
-  elements.settingsMenu.classList.add("is-hidden");
-  elements.settingsBackdrop.classList.add("is-hidden");
-  elements.settingsMenu.setAttribute("aria-hidden", "true");
-  refreshOverlayState();
+function closeSettingsMenu(options = {}) {
+  if (elements.settingsMenu.classList.contains("is-hidden")) {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    elements.settingsMenu.classList.add("is-hidden");
+    elements.settingsBackdrop.classList.add("is-hidden");
+    elements.settingsMenu.setAttribute("aria-hidden", "true");
+    refreshOverlayState();
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
 }
 
 function toggleSettingsMenu() {
@@ -865,9 +1049,14 @@ function setView(view) {
 }
 
 function openSearchView() {
-  closeSettingsMenu();
-  closeLightbox();
+  if (activeView === "search") {
+    return;
+  }
+
+  closeSettingsMenu({ skipHistory: true });
+  closeLightbox({ skipHistory: true });
   setView("search");
+  pushModalHistoryEntry("search");
 
   window.requestAnimationFrame(() => {
     elements.searchInput.focus();
@@ -875,21 +1064,54 @@ function openSearchView() {
   });
 }
 
-function closeSearchView() {
-  setView("home");
+function closeSearchView(options = {}) {
+  if (activeView !== "search") {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    setView("home");
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
 }
 
 function openProfileEditView() {
-  closeSettingsMenu();
-  closeLightbox();
+  if (activeView === "profileEdit") {
+    return;
+  }
+
+  closeSettingsMenu({ skipHistory: true });
+  closeLightbox({ skipHistory: true });
   elements.cityInput.value = currentData.profile.city;
   elements.constellationInput.value = currentData.profile.constellation;
   elements.ipInput.value = currentData.profile.ipLocation;
   setView("profileEdit");
+  pushModalHistoryEntry("profileEdit");
 }
 
-function closeProfileEditView() {
-  setView("home");
+function closeProfileEditView(options = {}) {
+  if (activeView !== "profileEdit") {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    setView("home");
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
 }
 
 function saveProfileDetails(event) {
@@ -920,13 +1142,14 @@ function openDetailView(postId, returnView = activeView) {
     return;
   }
 
-  closeSettingsMenu();
-  closeLightbox();
+  closeSettingsMenu({ skipHistory: true });
+  closeLightbox({ skipHistory: true });
   currentDetailPostId = post.id;
   detailReturnView = returnView;
   renderDetailPost(post);
   window.posthog.capture("view_post_detail");
   setView("detail");
+  pushModalHistoryEntry("detail");
 }
 
 function renderCurrentDetailIfNeeded() {
@@ -955,10 +1178,24 @@ function renderDetailPost(post) {
   });
 }
 
-function closeDetailView() {
-  const targetView = detailReturnView === "search" ? "search" : "home";
-  currentDetailPostId = "";
-  setView(targetView);
+function closeDetailView(options = {}) {
+  if (activeView !== "detail" && !currentDetailPostId) {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    const targetView = detailReturnView === "search" ? "search" : "home";
+    currentDetailPostId = "";
+    setView(targetView);
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
 }
 
 function normalizeLightboxItems(url, filename = "dynamic-image.jpg", previewItems = []) {
@@ -1026,6 +1263,7 @@ function renderActiveLightboxItem() {
 }
 
 function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], preferredIndex = 0) {
+  const wasHidden = elements.lightboxView.classList.contains("is-hidden");
   const normalizedItems = normalizeLightboxItems(url, filename, previewItems);
 
   if (normalizedItems.length === 0) {
@@ -1047,23 +1285,41 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
   elements.lightboxView.setAttribute("aria-hidden", "false");
   refreshOverlayState();
   window.posthog.capture("image_preview_open");
+
+  if (wasHidden) {
+    pushModalHistoryEntry("lightbox");
+  }
 }
 
-function closeLightbox() {
-  clearTimeout(lightboxLongPressTimer);
-  lightboxLongPressTimer = null;
-  lightboxRenderToken += 1;
-  currentLightboxUrl = "";
-  currentLightboxItems = [];
-  currentLightboxIndex = -1;
-  elements.lightboxView.classList.add("is-hidden");
-  elements.lightboxView.setAttribute("aria-hidden", "true");
-  elements.lightboxImage.removeAttribute("src");
-  elements.lightboxImage.onload = null;
-  elements.lightboxImage.onerror = null;
-  elements.lightboxImage.alt = "preview-image";
-  setLightboxDownloadTarget("", "dynamic-image.jpg");
-  refreshOverlayState();
+function closeLightbox(options = {}) {
+  if (elements.lightboxView.classList.contains("is-hidden")) {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    clearTimeout(lightboxLongPressTimer);
+    lightboxLongPressTimer = null;
+    lightboxRenderToken += 1;
+    currentLightboxUrl = "";
+    currentLightboxItems = [];
+    currentLightboxIndex = -1;
+    elements.lightboxView.classList.add("is-hidden");
+    elements.lightboxView.setAttribute("aria-hidden", "true");
+    elements.lightboxImage.removeAttribute("src");
+    elements.lightboxImage.onload = null;
+    elements.lightboxImage.onerror = null;
+    elements.lightboxImage.alt = "preview-image";
+    setLightboxDownloadTarget("", "dynamic-image.jpg");
+    refreshOverlayState();
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
 }
 
 function switchLightboxImage(direction) {
@@ -2007,6 +2263,7 @@ if (isClientRuntime) {
   window.addEventListener("resize", () => {
     updateFastScrollerThumb();
   });
+  window.addEventListener("popstate", handlePopState);
   elements.importFileButton?.addEventListener("click", () => {
     window.posthog.capture("import_button_click");
   });
@@ -2100,22 +2357,7 @@ if (isClientRuntime) {
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      closeLightbox();
-      closeSettingsMenu();
-
-      if (activeView === "detail") {
-        closeDetailView();
-        return;
-      }
-
-      if (activeView === "profileEdit") {
-        closeProfileEditView();
-        return;
-      }
-
-      if (activeView === "search") {
-        closeSearchView();
-      }
+      closeTopOverlayManually();
     }
   });
 
@@ -2147,6 +2389,7 @@ async function bootstrapApp() {
     return;
   }
 
+  ensureHistoryStateInitialized();
   renderInitializationState();
   await hydratePersistedState();
   isInitializing = false;
