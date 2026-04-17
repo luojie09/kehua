@@ -637,7 +637,7 @@ function render() {
   const avatarSource = avatarPreviewUrl || profile.avatar || DEFAULT_AVATAR_IMAGE;
 
   elements.profileName.textContent = profile.name;
-  elements.profileMeta.textContent = metaBits.join(" 路 ");
+  elements.profileMeta.textContent = metaBits.join(" ");
   elements.ipLocation.textContent = profile.ipLocation;
   elements.profileSubmetaRow.classList.toggle("is-hidden", !profile.ipLocation);
   elements.avatarLetter.textContent = (profile.name.trim().slice(0, 1) || "\u539f").toUpperCase();
@@ -727,7 +727,7 @@ function setPostText(node, post, truncateText = true) {
 
   const more = document.createElement("span");
   more.className = "expand-link";
-  more.textContent = "鏇村";
+  more.textContent = "更多";
   more.dataset.postId = post.id;
   more.setAttribute("role", "button");
   more.setAttribute("tabindex", "0");
@@ -844,7 +844,7 @@ function updateSearchResults(options = {}) {
     if (isTruncated) {
       const expandLink = document.createElement("span");
       expandLink.className = "expand-link";
-      expandLink.textContent = "鏇村";
+      expandLink.textContent = "更多";
       expandLink.dataset.postId = post.id;
       expandLink.setAttribute("role", "button");
       expandLink.setAttribute("tabindex", "0");
