@@ -178,56 +178,8 @@ function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
 }
 
-function sanitizeAnalyticsValue(value) {
-  if (typeof value === "string") {
-    return value.slice(0, 255);
-  }
-
-  if (typeof value === "number" || typeof value === "boolean" || value === null) {
-    return value;
-  }
-
-  return String(value ?? "").slice(0, 255);
-}
-
-function sanitizeAnalyticsPayload(payload = {}) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(payload)
-      .slice(0, 8)
-      .map(([key, value]) => [String(key).slice(0, 255), sanitizeAnalyticsValue(value)])
-  );
-}
-
-function track(eventName, payload = {}) {
-  if (!isClientRuntime || typeof window.va !== "function" || !optionalString(eventName)) {
-    return;
-  }
-
-  const dispatch = () => {
-    try {
-      window.va("event", {
-        name: eventName,
-        data: sanitizeAnalyticsPayload(payload)
-      });
-    } catch (error) {
-      console.warn("Vercel analytics track failed.", error);
-    }
-  };
-
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(dispatch, { timeout: 600 });
-    return;
-  }
-
-  window.setTimeout(dispatch, 0);
-}
-
 function trackImportError(error) {
-  track("import_error", {
+  window.posthog.capture("import_error", {
     error_reason: optionalString(error?.message) || "鏈煡閿欒"
   });
 }
@@ -450,7 +402,7 @@ function queuePersistedState(record) {
     .then(() => writePersistedState(record))
     .then(() => {
       if (importSuccessPayload) {
-        track("import_success", importSuccessPayload);
+        window.posthog.capture("import_success", importSuccessPayload);
       }
     })
     .catch((error) => {
@@ -863,7 +815,7 @@ function updateSearchResults(options = {}) {
 
   elements.searchSummary.textContent = `\u627e\u5230 ${results.length} \u6761\u548c\u201c${keyword}\u201d\u76f8\u5173\u7684\u52a8\u6001`;
   if (shouldTrack) {
-    track("search_perform", { has_result: results.length > 0 });
+    window.posthog.capture("search_perform", { has_result: results.length > 0 });
   }
 
   renderPostList(elements.searchResults, results, {
@@ -973,7 +925,7 @@ function openDetailView(postId, returnView = activeView) {
   currentDetailPostId = post.id;
   detailReturnView = returnView;
   renderDetailPost(post);
-  track("view_post_detail");
+  window.posthog.capture("view_post_detail");
   setView("detail");
 }
 
@@ -1094,7 +1046,7 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
   elements.lightboxView.classList.remove("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "false");
   refreshOverlayState();
-  track("image_preview_open");
+  window.posthog.capture("image_preview_open");
 }
 
 function closeLightbox() {
@@ -1130,7 +1082,7 @@ function switchLightboxImage(direction) {
   const switched = renderActiveLightboxItem();
 
   if (switched) {
-    track(direction === "prev" ? "image_swipe_prev" : "image_swipe_next");
+    window.posthog.capture(direction === "prev" ? "image_swipe_prev" : "image_swipe_next");
   }
 
   return switched;
@@ -1379,7 +1331,7 @@ function mountResolvedMedia(node, mediaItem, url, context = {}) {
   image.dataset.postId = optionalString(context.postId);
   image.dataset.mediaIndex = String(Number.isFinite(context.mediaIndex) ? context.mediaIndex : -1);
   image.addEventListener("error", () => {
-    track("image_load_fallback");
+    window.posthog.capture("image_load_fallback");
 
     if (image.dataset.fallbackApplied === "true") {
       return;
@@ -1853,7 +1805,7 @@ async function hydratePersistedState() {
     persistedState = await readPersistedState();
   } catch (error) {
     console.warn("Failed to read persisted IndexedDB state.", error);
-    track("indexeddb_read_fail", {
+    window.posthog.capture("indexeddb_read_fail", {
       error_reason: optionalString(error?.message) || "鏈煡閿欒"
     });
     return;
@@ -2056,7 +2008,7 @@ if (isClientRuntime) {
     updateFastScrollerThumb();
   });
   elements.importFileButton?.addEventListener("click", () => {
-    track("import_button_click");
+    window.posthog.capture("import_button_click");
   });
   elements.settingsButton.addEventListener("click", toggleSettingsMenu);
   elements.settingsClose.addEventListener("click", closeSettingsMenu);
@@ -2109,7 +2061,7 @@ if (isClientRuntime) {
   elements.lightboxView.addEventListener("touchstart", handleLightboxTouchStart, { passive: true });
   elements.lightboxView.addEventListener("touchend", handleLightboxTouchEnd, { passive: true });
   elements.lightboxImage.addEventListener("error", () => {
-    track("image_load_fallback");
+    window.posthog.capture("image_load_fallback");
     updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u56fe\u7247\u8d44\u6e90\u65e0\u6cd5\u8bfb\u53d6\u3002", "is-error");
   });
   elements.lightboxImage.addEventListener(
