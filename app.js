@@ -1,4 +1,4 @@
-const STORAGE_KEY = "atom-journey-profile-page";
+﻿const STORAGE_KEY = "atom-journey-profile-page";
 const PROFILE_PREFERENCES_KEY = "atom-journey-profile-preferences";
 const INDEXED_DB_NAME = "atom-journey-profile-db";
 const INDEXED_DB_VERSION = 1;
@@ -7,7 +7,7 @@ const INDEXED_DB_RECORD = "session";
 
 const TIMESTAMP_LINE_REGEX =
   /^(\d{4})\D(\d{1,2})\D(\d{1,2})\D\s+(\d{1,2}):(\d{2}):(\d{2})$/;
-const MEDIA_REFERENCE_REGEX = /^\[([^\]:：\n]{1,8})\s*[：:]\s*(.+?)\]$/u;
+const MEDIA_REFERENCE_REGEX = /^\[([^\]:锛歕n]{1,8})\s*[锛?]\s*(.+?)\]$/u;
 const IMAGE_FILE_REGEX = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 const VIDEO_FILE_REGEX = /\.(m4v|mov|mp4|webm)$/i;
 const DEFAULT_COVER_IMAGE = createSvgDataUrl(`
@@ -51,6 +51,19 @@ const DEFAULT_AVATAR_IMAGE = createSvgDataUrl(`
     <circle cx="56" cy="44" r="19" fill="url(#avatarShape)"/>
     <path d="M20 96C24 74 40 64 56 64C72 64 88 74 92 96H20Z" fill="url(#avatarShape)"/>
     <circle cx="36" cy="30" r="24" fill="#ffffff" fill-opacity="0.26"/>
+  </svg>
+`);
+const DEFAULT_MEDIA_IMAGE = createSvgDataUrl(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 960">
+    <defs>
+      <linearGradient id="mediaBg" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="#f7f8fa"/>
+        <stop offset="100%" stop-color="#e6eaf0"/>
+      </linearGradient>
+    </defs>
+    <rect width="720" height="960" rx="48" fill="url(#mediaBg)"/>
+    <circle cx="252" cy="292" r="72" fill="#d3dae3"/>
+    <path d="M124 708L280 514L392 632L480 548L596 708H124Z" fill="#c2ccd8"/>
   </svg>
 `);
 
@@ -120,6 +133,7 @@ const elements = {
   importSummary: document.getElementById("importSummary"),
   initLoading: document.getElementById("initLoading"),
   fileInput: document.getElementById("fileInput"),
+  importFileButton: document.querySelector(".file-button"),
   clearSessionButton: document.getElementById("clearSessionButton"),
   settingsButton: document.getElementById("settingsButton"),
   settingsClose: document.getElementById("settingsClose"),
@@ -158,9 +172,64 @@ let lightboxIgnoreClickUntil = 0;
 let lightboxRenderToken = 0;
 let fastScrollerHideTimer = null;
 let isFastScrollerDragging = false;
+let pendingImportSuccessPayload = null;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
+}
+
+function sanitizeAnalyticsValue(value) {
+  if (typeof value === "string") {
+    return value.slice(0, 255);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+
+  return String(value ?? "").slice(0, 255);
+}
+
+function sanitizeAnalyticsPayload(payload = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(payload)
+      .slice(0, 8)
+      .map(([key, value]) => [String(key).slice(0, 255), sanitizeAnalyticsValue(value)])
+  );
+}
+
+function track(eventName, payload = {}) {
+  if (!isClientRuntime || typeof window.va !== "function" || !optionalString(eventName)) {
+    return;
+  }
+
+  const dispatch = () => {
+    try {
+      window.va("event", {
+        name: eventName,
+        data: sanitizeAnalyticsPayload(payload)
+      });
+    } catch (error) {
+      console.warn("Vercel analytics track failed.", error);
+    }
+  };
+
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(dispatch, { timeout: 600 });
+    return;
+  }
+
+  window.setTimeout(dispatch, 0);
+}
+
+function trackImportError(error) {
+  track("import_error", {
+    error_reason: optionalString(error?.message) || "鏈煡閿欒"
+  });
 }
 
 function loadStoredData() {
@@ -187,7 +256,7 @@ function loadStoredData() {
 
 function isLegacySampleSnapshot(data) {
   return (
-    data?.profile?.name === "原子旅途" &&
+    data?.profile?.name === "\u539f\u5b50\u65c5\u9014" &&
     Number(data?.profile?.entriesCount) === 636 &&
     Array.isArray(data?.posts) &&
     data.posts.length <= 1
@@ -373,11 +442,23 @@ async function writePersistedState(record) {
 }
 
 function queuePersistedState(record) {
+  const importSuccessPayload = pendingImportSuccessPayload;
+  pendingImportSuccessPayload = null;
+
   persistStatePromise = persistStatePromise
     .catch(() => undefined)
     .then(() => writePersistedState(record))
+    .then(() => {
+      if (importSuccessPayload) {
+        track("import_success", importSuccessPayload);
+      }
+    })
     .catch((error) => {
       console.warn("Failed to persist app state.", error);
+
+      if (importSuccessPayload) {
+        trackImportError(error);
+      }
     });
 }
 
@@ -442,16 +523,16 @@ function updateImportSummary() {
   const mediaCount = currentData.posts.reduce((sum, post) => sum + post.media.length, 0);
 
   if (currentImportMode === "zip") {
-    elements.importSummary.textContent = `已导入 ZIP：${postCount} 条动态，${mediaCount} 个图片/视频。`;
+    elements.importSummary.textContent = `\u5df2\u5bfc\u5165 ZIP\uff1a${postCount} \u6761\u52a8\u6001\uff0c${mediaCount} \u4e2a\u56fe\u7247/\u89c6\u9891\u3002`;
     return;
   }
 
   if (currentImportMode === "json") {
-    elements.importSummary.textContent = `当前是调试 JSON：${postCount} 条动态，${mediaCount} 个图片/视频。`;
+    elements.importSummary.textContent = `\u5f53\u524d\u662f\u8c03\u8bd5 JSON\uff1a${postCount} \u6761\u52a8\u6001\uff0c${mediaCount} \u4e2a\u56fe\u7247/\u89c6\u9891\u3002`;
     return;
   }
 
-  elements.importSummary.textContent = "当前未导入 ZIP，展示默认资料。";
+  elements.importSummary.textContent = "\u5f53\u524d\u672a\u5bfc\u5165 ZIP\uff0c\u5c55\u793a\u9ed8\u8ba4\u8d44\u6599\u3002";
 }
 
 function toggleBusyState(isBusy) {
@@ -598,21 +679,21 @@ function handleFastScrollerPointerEnd() {
 
 function render() {
   const { profile, posts } = currentData;
-  const metaBits = [profile.city, profile.constellation, `${profile.entriesCount} 条`].filter(Boolean);
+  const metaBits = [profile.city, profile.constellation, `${profile.entriesCount} \u6761`].filter(Boolean);
   const avatarWrap = elements.avatarImage.parentElement;
   const coverSource = coverPreviewUrl || DEFAULT_COVER_IMAGE;
   const avatarSource = avatarPreviewUrl || profile.avatar || DEFAULT_AVATAR_IMAGE;
 
   elements.profileName.textContent = profile.name;
-  elements.profileMeta.textContent = metaBits.join(" · ");
+  elements.profileMeta.textContent = metaBits.join(" 路 ");
   elements.ipLocation.textContent = profile.ipLocation;
   elements.profileSubmetaRow.classList.toggle("is-hidden", !profile.ipLocation);
-  elements.avatarLetter.textContent = (profile.name.trim().slice(0, 1) || "原").toUpperCase();
+  elements.avatarLetter.textContent = (profile.name.trim().slice(0, 1) || "\u539f").toUpperCase();
   elements.coverImage.src = coverSource;
 
   if (avatarSource) {
     elements.avatarImage.src = avatarSource;
-    elements.avatarImage.alt = `${profile.name} 的头像`;
+    elements.avatarImage.alt = `${profile.name} \u7684\u5934\u50cf`;
     avatarWrap.classList.add("has-image");
   } else {
     elements.avatarImage.removeAttribute("src");
@@ -624,7 +705,7 @@ function render() {
   });
 
   renderPostList(elements.postsContainer, posts, {
-    emptyMessage: "暂无动态，导入 ZIP 后会显示在这里。"
+    emptyMessage: "\u6682\u65e0\u52a8\u6001\uff0c\u5bfc\u5165 ZIP \u540e\u4f1a\u663e\u793a\u5728\u8fd9\u91cc\u3002"
   });
 
   updateSearchResults();
@@ -638,12 +719,12 @@ function render() {
 function renderInitializationState() {
   elements.initLoading.classList.add("is-visible");
   elements.postsContainer.innerHTML =
-    '<article class="post-card"><p class="post-text is-empty">正在恢复你上次的数据...</p></article>';
+    '<article class="post-card"><p class="post-text is-empty">姝ｅ湪鎭㈠浣犱笂娆＄殑鏁版嵁...</p></article>';
 }
 
 function renderPostList(container, posts, options = {}) {
   const {
-    emptyMessage = "暂无相关动态。",
+    emptyMessage = "\u6682\u65e0\u76f8\u5173\u52a8\u6001\u3002",
     truncateText = true
   } = options;
 
@@ -694,7 +775,7 @@ function setPostText(node, post, truncateText = true) {
 
   const more = document.createElement("span");
   more.className = "expand-link";
-  more.textContent = "更多";
+  more.textContent = "鏇村";
   more.dataset.postId = post.id;
   more.setAttribute("role", "button");
   more.setAttribute("tabindex", "0");
@@ -764,11 +845,12 @@ function highlightText(text, keyword) {
   return safeText.replace(pattern, '<mark class="search-hit">$1</mark>');
 }
 
-function updateSearchResults() {
+function updateSearchResults(options = {}) {
+  const { shouldTrack = false } = options;
   const keyword = optionalString(elements.searchInput.value);
 
   if (!keyword) {
-    elements.searchSummary.textContent = "输入关键词搜索动态";
+    elements.searchSummary.textContent = "\u8f93\u5165\u5173\u952e\u8bcd\u641c\u7d22\u52a8\u6001";
     elements.searchResults.innerHTML = "";
     return;
   }
@@ -779,9 +861,13 @@ function updateSearchResults() {
     return haystack.includes(normalizedKeyword);
   });
 
-  elements.searchSummary.textContent = `找到 ${results.length} 条和“${keyword}”相关的动态`;
+  elements.searchSummary.textContent = `\u627e\u5230 ${results.length} \u6761\u548c\u201c${keyword}\u201d\u76f8\u5173\u7684\u52a8\u6001`;
+  if (shouldTrack) {
+    track("search_perform", { has_result: results.length > 0 });
+  }
+
   renderPostList(elements.searchResults, results, {
-    emptyMessage: `没有找到和“${keyword}”相关的动态。`
+    emptyMessage: `\u6ca1\u6709\u627e\u5230\u548c\u201c${keyword}\u201d\u76f8\u5173\u7684\u52a8\u6001\u3002`
   });
 
   elements.searchResults.querySelectorAll(".post-card").forEach((card) => {
@@ -806,7 +892,7 @@ function updateSearchResults() {
     if (isTruncated) {
       const expandLink = document.createElement("span");
       expandLink.className = "expand-link";
-      expandLink.textContent = "更多";
+      expandLink.textContent = "鏇村";
       expandLink.dataset.postId = post.id;
       expandLink.setAttribute("role", "button");
       expandLink.setAttribute("tabindex", "0");
@@ -872,7 +958,7 @@ function saveProfileDetails(event) {
 
   render();
   closeProfileEditView();
-  updateStatus("资料已保存。", "is-success");
+  updateStatus("\u8d44\u6599\u5df2\u4fdd\u5b58\u3002", "is-success");
 }
 
 function openDetailView(postId, returnView = activeView) {
@@ -887,6 +973,7 @@ function openDetailView(postId, returnView = activeView) {
   currentDetailPostId = post.id;
   detailReturnView = returnView;
   renderDetailPost(post);
+  track("view_post_detail");
   setView("detail");
 }
 
@@ -908,7 +995,7 @@ function renderCurrentDetailIfNeeded() {
 function renderDetailPost(post) {
   elements.detailTime.textContent = post.timestamp;
   elements.detailText.classList.toggle("is-empty", !optionalString(post.text));
-  elements.detailText.textContent = optionalString(post.text) || "这条动态没有文字内容。";
+  elements.detailText.textContent = optionalString(post.text) || "\u8fd9\u6761\u52a8\u6001\u6ca1\u6709\u6587\u5b57\u5185\u5bb9\u3002";
   buildGallery(elements.detailGallery, post.media, {
     removeEmpty: false,
     postId: post.id,
@@ -974,7 +1061,7 @@ function renderActiveLightboxItem() {
     }
 
     currentLightboxUrl = "";
-    updateStatus("图片预览失败：图片资源无法读取。", "is-error");
+    updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u56fe\u7247\u8d44\u6e90\u65e0\u6cd5\u8bfb\u53d6\u3002", "is-error");
   };
   elements.lightboxImage.onload = () => {
     if (renderToken !== lightboxRenderToken) {
@@ -990,7 +1077,7 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
   const normalizedItems = normalizeLightboxItems(url, filename, previewItems);
 
   if (normalizedItems.length === 0) {
-    updateStatus("图片预览失败：未找到有效图片地址。", "is-error");
+    updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u672a\u627e\u5230\u6709\u6548\u56fe\u7247\u5730\u5740\u3002", "is-error");
     return;
   }
 
@@ -999,7 +1086,7 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
   currentLightboxIndex = Math.max(0, Math.min(normalizedItems.length - 1, safeIndex));
 
   if (!renderActiveLightboxItem()) {
-    updateStatus("图片预览失败：无法加载图片。", "is-error");
+    updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u65e0\u6cd5\u52a0\u8f7d\u56fe\u7247\u3002", "is-error");
     return;
   }
 
@@ -1007,6 +1094,7 @@ function openLightbox(url, filename = "dynamic-image.jpg", previewItems = [], pr
   elements.lightboxView.classList.remove("is-hidden");
   elements.lightboxView.setAttribute("aria-hidden", "false");
   refreshOverlayState();
+  track("image_preview_open");
 }
 
 function closeLightbox() {
@@ -1039,7 +1127,13 @@ function switchLightboxImage(direction) {
   }
 
   currentLightboxIndex = nextIndex;
-  return renderActiveLightboxItem();
+  const switched = renderActiveLightboxItem();
+
+  if (switched) {
+    track(direction === "prev" ? "image_swipe_prev" : "image_swipe_next");
+  }
+
+  return switched;
 }
 
 function saveCurrentLightboxImage() {
@@ -1270,20 +1364,31 @@ function mountResolvedMedia(node, mediaItem, url, context = {}) {
 
     const chip = document.createElement("span");
     chip.className = "video-chip";
-    chip.textContent = "视频";
+    chip.textContent = "瑙嗛";
     node.appendChild(chip);
     return;
   }
 
   const image = document.createElement("img");
   image.src = url;
-  image.alt = mediaItem.filename || "动态配图";
+  image.alt = mediaItem.filename || "\u52a8\u6001\u914d\u56fe";
   image.loading = "lazy";
   image.className = "previewable-image";
   image.dataset.previewSrc = url;
   image.dataset.filename = mediaItem.filename || "dynamic-image.jpg";
   image.dataset.postId = optionalString(context.postId);
   image.dataset.mediaIndex = String(Number.isFinite(context.mediaIndex) ? context.mediaIndex : -1);
+  image.addEventListener("error", () => {
+    track("image_load_fallback");
+
+    if (image.dataset.fallbackApplied === "true") {
+      return;
+    }
+
+    image.dataset.fallbackApplied = "true";
+    image.dataset.previewSrc = DEFAULT_MEDIA_IMAGE;
+    image.src = DEFAULT_MEDIA_IMAGE;
+  });
   node.appendChild(image);
 }
 
@@ -1399,7 +1504,7 @@ function applyImagePreview(kind, file) {
 
   if (!/^image\//i.test(file.type) && !IMAGE_FILE_REGEX.test(file.name)) {
     targetInput.value = "";
-    updateStatus("请选择图片文件作为封面或头像。", "is-error");
+    updateStatus("\u8bf7\u9009\u62e9\u56fe\u7247\u6587\u4ef6\u4f5c\u4e3a\u5c01\u9762\u6216\u5934\u50cf\u3002", "is-error");
     return;
   }
 
@@ -1408,14 +1513,14 @@ function applyImagePreview(kind, file) {
     setPreviewBlob("cover", file);
     targetInput.value = "";
     render();
-    updateStatus("封面图已更新，仅在当前浏览器本地预览。", "is-success");
+    updateStatus("\u5c01\u9762\u56fe\u5df2\u66f4\u65b0\uff0c\u4ec5\u5728\u5f53\u524d\u6d4f\u89c8\u5668\u672c\u5730\u9884\u89c8\u3002", "is-success");
     return;
   }
 
   setPreviewBlob("avatar", file);
   targetInput.value = "";
   render();
-  updateStatus("头像已更新，仅在当前浏览器本地预览。", "is-success");
+  updateStatus("\u5934\u50cf\u5df2\u66f4\u65b0\uff0c\u4ec5\u5728\u5f53\u524d\u6d4f\u89c8\u5668\u672c\u5730\u9884\u89c8\u3002", "is-success");
 }
 
 function applyJsonString(jsonText) {
@@ -1426,10 +1531,14 @@ function applyJsonString(jsonText) {
     persistedZipFileName = "";
     currentImportMode = "json";
     currentData = normalizeData(parsed);
+    pendingImportSuccessPayload = {
+      record_count: currentData.posts.length
+    };
     render();
-    updateStatus("调试 JSON 已应用。", "is-success");
+    updateStatus("\u8c03\u8bd5 JSON \u5df2\u5e94\u7528\u3002", "is-success");
   } catch (error) {
-    updateStatus(`JSON 解析失败：${error.message}`, "is-error");
+    trackImportError(error);
+    updateStatus(`JSON 瑙ｆ瀽澶辫触锛?{error.message}`, "is-error");
   }
 }
 
@@ -1445,7 +1554,7 @@ function exportCurrentData() {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
-  updateStatus("当前解析结果已导出。", "is-success");
+  updateStatus("\u5f53\u524d\u89e3\u6790\u7ed3\u679c\u5df2\u5bfc\u51fa\u3002", "is-success");
 }
 
 async function importSelectedFile(file) {
@@ -1454,7 +1563,8 @@ async function importSelectedFile(file) {
   }
 
   if (!isZipFile(file)) {
-    updateStatus("这里只支持导入可话 ZIP 文件。", "is-error");
+    trackImportError(new Error("涓嶆敮鎸佺殑鏂囦欢鏍煎紡"));
+    updateStatus("\u8fd9\u91cc\u53ea\u652f\u6301\u5bfc\u5165\u53ef\u8bdd ZIP \u6587\u4ef6\u3002", "is-error");
     return;
   }
 
@@ -1467,12 +1577,13 @@ function isZipFile(file) {
 
 async function importZipArchive(file) {
   if (typeof JSZip === "undefined") {
-    updateStatus("ZIP 解析器加载失败，请刷新页面后重试。", "is-error");
+    trackImportError(new Error("ZIP parser unavailable"));
+    updateStatus("ZIP \u89e3\u6790\u5668\u52a0\u8f7d\u5931\u8d25\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\u3002", "is-error");
     return;
   }
 
   toggleBusyState(true);
-  updateStatus("正在解压 ZIP 并匹配动态文本与图片视频，请稍等...", "is-loading");
+  updateStatus("姝ｅ湪瑙ｅ帇 ZIP 骞跺尮閰嶅姩鎬佹枃鏈笌鍥剧墖瑙嗛锛岃绋嶇瓑...", "is-loading");
 
   try {
     const result = await parseKehuaArchive(file);
@@ -1482,13 +1593,17 @@ async function importZipArchive(file) {
     persistedZipFileName = file.name;
     currentImportMode = "zip";
     currentData = normalizeData(result.data);
+    pendingImportSuccessPayload = {
+      record_count: currentData.posts.length
+    };
     render();
     updateStatus(
-      `ZIP 导入完成：共解析 ${currentData.posts.length} 条动态，匹配 ${currentData.posts.reduce((sum, post) => sum + post.media.length, 0)} 个图片/视频。`,
+      `ZIP \u5bfc\u5165\u5b8c\u6210\uff1a\u5171\u89e3\u6790 ${currentData.posts.length} \u6761\u52a8\u6001\uff0c\u5339\u914d ${currentData.posts.reduce((sum, post) => sum + post.media.length, 0)} \u4e2a\u56fe\u7247/\u89c6\u9891\u3002`, 
       "is-success"
     );
   } catch (error) {
-    updateStatus(`ZIP 导入失败：${error.message}`, "is-error");
+    trackImportError(error);
+    updateStatus(`ZIP 瀵煎叆澶辫触锛?{error.message}`, "is-error");
   } finally {
     toggleBusyState(false);
     elements.fileInput.value = "";
@@ -1504,7 +1619,7 @@ async function parseKehuaArchive(file) {
 
   if (textEntries.length === 0) {
     throw new Error(
-      "没有在 ZIP 里找到“动态内容.txt”。请确认压缩包包含“我的动态 / 2023年 / 2023年-动态内容.txt”这类文件。"
+      "\u6ca1\u6709\u5728 ZIP \u91cc\u627e\u5230\u201c\u52a8\u6001\u5185\u5bb9.txt\u201d\u3002\u8bf7\u786e\u8ba4\u538b\u7f29\u5305\u5305\u542b\u201c\u6211\u7684\u52a8\u6001 / 2023\u5e74 / 2023\u5e74-\u52a8\u6001\u5185\u5bb9.txt\u201d\u8fd9\u7c7b\u6587\u4ef6\u3002"
     );
   }
 
@@ -1614,7 +1729,7 @@ function parseDynamicText(content, mediaEntries, sourceName) {
           : "";
 
       currentPost.media.push({
-        type: mediaLabel.includes("视频") ? "video" : detectMediaType(filename),
+        type: mediaLabel.includes("瑙嗛") ? "video" : detectMediaType(filename),
         filename,
         lookupKey: resolvedLookupKey,
         url: ""
@@ -1662,15 +1777,15 @@ function isArchiveDynamicTextPath(pathname) {
 
 function formatYearSummary(years) {
   if (years.length === 0) {
-    return "可话动态";
+    return "\u53ef\u8bdd\u52a8\u6001";
   }
 
   const sorted = [...years].sort((left, right) => left - right);
   if (sorted.length === 1) {
-    return `${sorted[0]}年`;
+    return `${sorted[0]}\u5e74`;
   }
 
-  return `${sorted[0]}-${sorted[sorted.length - 1]}年`;
+  return `${sorted[0]}-${sorted[sorted.length - 1]}\u5e74`;
 }
 
 function extractProfileName(entries, archiveName) {
@@ -1681,7 +1796,7 @@ function extractProfileName(entries, archiveName) {
 
   for (const candidate of topLevelCandidates) {
     const cleaned = candidate.replace(/\(\d+\)\s*$/, "").trim();
-    const match = cleaned.match(/可话[-_ ]?个人动态[-_ ]?(.+)$/u);
+    const match = cleaned.match(/\u53ef\u8bdd[-_ ]?\u4e2a\u4eba\u52a8\u6001[-_ ]?(.+)$/u);
 
     if (match?.[1]) {
       return match[1].trim();
@@ -1732,7 +1847,17 @@ function resetSessionState() {
 }
 
 async function hydratePersistedState() {
-  const persistedState = await readPersistedState();
+  let persistedState = null;
+
+  try {
+    persistedState = await readPersistedState();
+  } catch (error) {
+    console.warn("Failed to read persisted IndexedDB state.", error);
+    track("indexeddb_read_fail", {
+      error_reason: optionalString(error?.message) || "鏈煡閿欒"
+    });
+    return;
+  }
 
   if (!persistedState) {
     return;
@@ -1761,7 +1886,7 @@ async function hydratePersistedState() {
       persistedZipFileName = restoredFile.name;
 
       if (typeof JSZip === "undefined") {
-        updateStatus("已恢复历史数据；媒体文件将在 ZIP 解析器可用后继续恢复。", "is-loading");
+        updateStatus("\u5df2\u6062\u590d\u5386\u53f2\u6570\u636e\uff1b\u5a92\u4f53\u6587\u4ef6\u5c06\u5728 ZIP \u89e3\u6790\u5668\u53ef\u7528\u540e\u7ee7\u7eed\u6062\u590d\u3002", "is-loading");
         return;
       }
 
@@ -1775,7 +1900,7 @@ async function hydratePersistedState() {
         }
       } catch (zipError) {
         console.warn("Failed to restore ZIP media entries, fallback to snapshot only.", zipError);
-        updateStatus("已恢复历史文本数据，部分图片资源暂未恢复。", "is-loading");
+        updateStatus("\u5df2\u6062\u590d\u5386\u53f2\u6587\u672c\u6570\u636e\uff0c\u90e8\u5206\u56fe\u7247\u8d44\u6e90\u6682\u672a\u6062\u590d\u3002", "is-loading");
       }
       return;
     }
@@ -1877,7 +2002,7 @@ function clearCurrentSession() {
   resetSessionState();
   setView("home");
   render();
-  updateStatus("已清空当前信息，现在可以重新导入新的 ZIP。", "is-success");
+  updateStatus("\u5df2\u6e05\u7a7a\u5f53\u524d\u4fe1\u606f\uff0c\u73b0\u5728\u53ef\u4ee5\u91cd\u65b0\u5bfc\u5165\u65b0\u7684 ZIP\u3002", "is-success");
 }
 
 if (isClientRuntime) {
@@ -1930,6 +2055,9 @@ if (isClientRuntime) {
   window.addEventListener("resize", () => {
     updateFastScrollerThumb();
   });
+  elements.importFileButton?.addEventListener("click", () => {
+    track("import_button_click");
+  });
   elements.settingsButton.addEventListener("click", toggleSettingsMenu);
   elements.settingsClose.addEventListener("click", closeSettingsMenu);
   elements.settingsBackdrop.addEventListener("click", closeSettingsMenu);
@@ -1958,7 +2086,9 @@ if (isClientRuntime) {
   elements.searchBackButton.addEventListener("click", closeSearchView);
   elements.profileEditBackButton.addEventListener("click", closeProfileEditView);
   elements.profileEditForm.addEventListener("submit", saveProfileDetails);
-  elements.searchInput.addEventListener("input", updateSearchResults);
+  elements.searchInput.addEventListener("input", () => {
+    updateSearchResults({ shouldTrack: true });
+  });
   elements.detailBackButton.addEventListener("click", closeDetailView);
   elements.lightboxClose.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1979,7 +2109,8 @@ if (isClientRuntime) {
   elements.lightboxView.addEventListener("touchstart", handleLightboxTouchStart, { passive: true });
   elements.lightboxView.addEventListener("touchend", handleLightboxTouchEnd, { passive: true });
   elements.lightboxImage.addEventListener("error", () => {
-    updateStatus("图片预览失败：图片资源无法读取。", "is-error");
+    track("image_load_fallback");
+    updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u56fe\u7247\u8d44\u6e90\u65e0\u6cd5\u8bfb\u53d6\u3002", "is-error");
   });
   elements.lightboxImage.addEventListener(
     "touchstart",
@@ -2008,7 +2139,8 @@ if (isClientRuntime) {
     try {
       await importSelectedFile(file);
     } catch (error) {
-      updateStatus(`读取文件失败：${error.message}`, "is-error");
+      trackImportError(error);
+      updateStatus(`璇诲彇鏂囦欢澶辫触锛?{error.message}`, "is-error");
     } finally {
       elements.fileInput.value = "";
     }
@@ -2052,7 +2184,8 @@ if (isClientRuntime) {
     try {
       await importSelectedFile(file);
     } catch (error) {
-      updateStatus(`拖拽导入失败：${error.message}`, "is-error");
+      trackImportError(error);
+      updateStatus(`鎷栨嫿瀵煎叆澶辫触锛?{error.message}`, "is-error");
     }
   });
 }
@@ -2071,3 +2204,4 @@ async function bootstrapApp() {
 if (isClientRuntime) {
   void bootstrapApp();
 }
+
