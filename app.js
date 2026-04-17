@@ -7,7 +7,7 @@ const INDEXED_DB_RECORD = "session";
 
 const TIMESTAMP_LINE_REGEX =
   /^(\d{4})\D(\d{1,2})\D(\d{1,2})\D\s+(\d{1,2}):(\d{2}):(\d{2})$/;
-const MEDIA_REFERENCE_REGEX = /^\[([^\]:锛歕n]{1,8})\s*[锛?]\s*(.+?)\]$/u;
+const MEDIA_REFERENCE_REGEX = /^\[([^\]:：\n]{1,8})\s*[：:]\s*(.+?)\]$/u;
 const IMAGE_FILE_REGEX = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 const VIDEO_FILE_REGEX = /\.(m4v|mov|mp4|webm)$/i;
 const DEFAULT_COVER_IMAGE = createSvgDataUrl(`
@@ -1492,7 +1492,7 @@ async function resolveMediaUrl(mediaItem) {
     return mediaItem.url;
   }
 
-  const lookupKey = resolveMediaLookupKey(mediaItem.lookupKey, mediaItem.filename);
+  const lookupKey = resolveMediaLookupKey(zipMediaEntries, mediaItem.lookupKey, mediaItem.filename);
   if (!lookupKey) {
     return "";
   }
@@ -1512,49 +1512,28 @@ async function resolveMediaUrl(mediaItem) {
   return url;
 }
 
-function resolveMediaLookupKey(lookupKey, filename) {
-  const candidates = [];
-  const lookupFull = normalizeMediaKeyCandidate(lookupKey, false);
-  const lookupBase = normalizeMediaKeyCandidate(lookupKey, true);
-  const filenameFull = normalizeMediaKeyCandidate(filename, false);
-  const filenameBase = normalizeMediaKeyCandidate(filename, true);
-
-  [lookupFull, lookupBase, filenameFull, filenameBase].forEach((candidate) => {
-    if (candidate && !candidates.includes(candidate)) {
-      candidates.push(candidate);
-    }
-  });
+function resolveMediaLookupKey(mediaEntries, lookupKey, filename) {
+  const candidates = [
+    normalizeMediaFilename(lookupKey),
+    normalizeMediaFilename(filename)
+  ].filter(Boolean);
 
   for (const candidate of candidates) {
-    if (zipMediaEntries.has(candidate)) {
+    if (mediaEntries.has(candidate)) {
       return candidate;
-    }
-  }
-
-  for (const candidate of candidates) {
-    const suffix = `/${candidate}`;
-    for (const entryKey of zipMediaEntries.keys()) {
-      if (entryKey.endsWith(suffix)) {
-        return entryKey;
-      }
     }
   }
 
   return candidates[0] || "";
 }
 
-function normalizeMediaKeyCandidate(value, asBaseName) {
-  const cleaned = optionalString(value).replace(/\\/g, "/").toLowerCase().replace(/^\.\//, "");
+function normalizeMediaFilename(value) {
+  const cleaned = optionalString(value).replace(/\\/g, "/").replace(/^\.\//, "").trim();
   if (!cleaned) {
     return "";
   }
 
-  if (!asBaseName) {
-    return cleaned;
-  }
-
-  const base = baseName(cleaned);
-  return base.toLowerCase();
+  return baseName(cleaned).toLowerCase();
 }
 
 function mountResolvedMedia(node, mediaItem, url, context = {}) {
@@ -1833,15 +1812,15 @@ async function parseKehuaArchive(file) {
 
   const mediaEntries = new Map();
   entries.forEach((entry) => {
-    const normalizedEntryName = normalizeArchivePath(entry.name).toLowerCase();
-    const name = baseName(normalizedEntryName);
+    const filename = normalizeMediaFilename(entry.name);
 
-    if (!isSupportedMediaFile(name)) {
+    if (!isSupportedMediaFile(filename)) {
       return;
     }
 
-    mediaEntries.set(name, entry);
-    mediaEntries.set(normalizedEntryName, entry);
+    if (!mediaEntries.has(filename)) {
+      mediaEntries.set(filename, entry);
+    }
   });
 
   const years = new Set();
@@ -1927,17 +1906,11 @@ function parseDynamicText(content, mediaEntries, sourceName) {
     const mediaMatch = trimmed.match(MEDIA_REFERENCE_REGEX);
     if (mediaMatch) {
       const filename = mediaMatch[2].trim();
-      const lookupFull = normalizeMediaKeyCandidate(filename, false);
-      const lookupBase = normalizeMediaKeyCandidate(filename, true);
       const mediaLabel = mediaMatch[1].trim();
-      const resolvedLookupKey = mediaEntries.has(lookupFull)
-        ? lookupFull
-        : mediaEntries.has(lookupBase)
-          ? lookupBase
-          : "";
+      const resolvedLookupKey = resolveMediaLookupKey(mediaEntries, filename, filename);
 
       currentPost.media.push({
-        type: mediaLabel.includes("瑙嗛") ? "video" : detectMediaType(filename),
+        type: mediaLabel.includes("视频") ? "video" : detectMediaType(filename),
         filename,
         lookupKey: resolvedLookupKey,
         url: ""
