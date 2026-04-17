@@ -183,10 +183,29 @@ function createSvgDataUrl(svg) {
 
 function getSafeErrorMessage(error, fallback = "解析发生未知错误") {
   if (typeof error === "string") {
-    return optionalString(error) || fallback;
+    const message = optionalString(error);
+    return looksLikeMojibake(message) ? fallback : message || fallback;
   }
 
-  return optionalString(error?.message) || fallback;
+  const message = optionalString(error?.message);
+  return looksLikeMojibake(message) ? fallback : message || fallback;
+}
+
+function looksLikeMojibake(value) {
+  if (!optionalString(value)) {
+    return false;
+  }
+
+  return /[�锟姝鍙鏇哄璺鍔淇璇]/u.test(value);
+}
+
+function sanitizeUiText(value, fallback = "") {
+  const text = optionalString(value);
+  if (!text) {
+    return fallback;
+  }
+
+  return looksLikeMojibake(text) ? fallback : text;
 }
 
 function decodeArchiveTextBytes(bytes) {
@@ -690,7 +709,12 @@ function buildDebugData(data) {
 }
 
 function updateStatus(message, type = "") {
-  elements.statusMessage.textContent = message;
+  const fallbackByType = {
+    "is-error": "处理失败，请重试。",
+    "is-success": "操作已完成。",
+    "is-loading": "正在处理中，请稍等..."
+  };
+  elements.statusMessage.textContent = sanitizeUiText(message, fallbackByType[type] || "");
   elements.statusMessage.classList.remove("is-error", "is-success", "is-loading");
 
   if (type) {
@@ -918,7 +942,7 @@ function render() {
 function renderInitializationState() {
   elements.initLoading.classList.add("is-visible");
   elements.postsContainer.innerHTML =
-    '<article class="post-card"><p class="post-text is-empty">姝ｅ湪鎭㈠浣犱笂娆＄殑鏁版嵁...</p></article>';
+    '<article class="post-card"><p class="post-text is-empty">正在恢复你上次导入的数据...</p></article>';
 }
 
 function renderPostList(container, posts, options = {}) {
@@ -1813,7 +1837,7 @@ async function importSelectedFile(file) {
   }
 
   if (!isZipFile(file)) {
-    trackImportError(new Error("涓嶆敮鎸佺殑鏂囦欢鏍煎紡"));
+    trackImportError(new Error("不支持的文件格式"));
     updateStatus("\u8fd9\u91cc\u53ea\u652f\u6301\u5bfc\u5165\u53ef\u8bdd ZIP \u6587\u4ef6\u3002", "is-error");
     return;
   }
@@ -1833,7 +1857,7 @@ async function importZipArchive(file) {
   }
 
   toggleBusyState(true);
-  updateStatus("姝ｅ湪瑙ｅ帇 ZIP 骞跺尮閰嶅姩鎬佹枃鏈笌鍥剧墖瑙嗛锛岃绋嶇瓑...", "is-loading");
+  updateStatus("正在解析 ZIP 并匹配动态文本与图片/视频，请稍等...", "is-loading");
 
   try {
     const result = await parseKehuaArchive(file);
