@@ -1,9 +1,13 @@
 ﻿const STORAGE_KEY = "atom-journey-profile-page";
 const PROFILE_PREFERENCES_KEY = "atom-journey-profile-preferences";
 const INDEXED_DB_NAME = "atom-journey-profile-db";
-const INDEXED_DB_VERSION = 1;
+const INDEXED_DB_VERSION = 2;
 const INDEXED_DB_STORE = "appState";
 const INDEXED_DB_RECORD = "session";
+const INDEXED_DB_POSTS_STORE = "posts";
+const POST_DRAFT_STORAGE_KEY = "post_draft";
+const MAX_CREATE_POST_IMAGES = 9;
+const UPDATE_NOTICE_DISMISSED_KEY = "kehua_update_notice_dismissed_v1";
 
 const TIMESTAMP_LINE_REGEX =
   /^(\d{4})\D(\d{1,2})\D(\d{1,2})\D\s+(\d{1,2}):(\d{2}):(\d{2})$/;
@@ -66,6 +70,12 @@ const DEFAULT_MEDIA_IMAGE = createSvgDataUrl(`
     <path d="M124 708L280 514L392 632L480 548L596 708H124Z" fill="#c2ccd8"/>
   </svg>
 `);
+const DEFAULT_RECORD_MOMENT_BACKGROUND = createSvgDataUrl(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 393 536">
+    <rect width="393" height="536" fill="#ffffff" />
+  </svg>
+`);
+const RECORD_MOMENT_WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
 const sampleData = {
   profile: {
@@ -93,6 +103,14 @@ const profilePreferences = isClientRuntime
 
 const elements = {
   phoneScreen: document.getElementById("phoneScreen"),
+  recordMomentView: document.getElementById("recordMomentView"),
+  recordMomentHero: document.getElementById("recordMomentHero"),
+  recordMomentBackgroundInput: document.getElementById("recordMomentBackgroundInput"),
+  recordMomentBackgroundImage: document.getElementById("recordMomentBackgroundImage"),
+  recordMomentDate: document.getElementById("recordMomentDate"),
+  recordMomentEditorCard: document.getElementById("recordMomentEditorCard"),
+  recordMomentTextarea: document.getElementById("recordMomentTextarea"),
+  profilePageRoot: document.getElementById("profilePageRoot"),
   fastScroller: document.getElementById("fastScroller"),
   fastScrollerThumb: document.getElementById("fastScrollerThumb"),
   coverImage: document.getElementById("coverImage"),
@@ -124,6 +142,14 @@ const elements = {
   cityInput: document.getElementById("cityInput"),
   constellationInput: document.getElementById("constellationInput"),
   ipInput: document.getElementById("ipInput"),
+  createPostView: document.getElementById("createPostView"),
+  createPostBackButton: document.getElementById("createPostBackButton"),
+  createPostSaveButton: document.getElementById("createPostSaveButton"),
+  createPostTextarea: document.getElementById("createPostTextarea"),
+  createPostImageInput: document.getElementById("createPostImageInput"),
+  createPostImageGrid: document.getElementById("createPostImageGrid"),
+  createPostAddButton: document.getElementById("createPostAddButton"),
+  createPostToast: document.getElementById("createPostToast"),
   lightboxView: document.getElementById("lightboxView"),
   lightboxStage: document.getElementById("lightboxStage"),
   lightboxClose: document.getElementById("lightboxClose"),
@@ -140,11 +166,16 @@ const elements = {
   settingsMenu: document.getElementById("settingsMenu"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   searchButton: document.getElementById("searchButton"),
-  postTemplate: document.getElementById("postTemplate")
+  postTemplate: document.getElementById("postTemplate"),
+  navHomeButton: document.getElementById("navHomeButton"),
+  navMessageButton: document.getElementById("navMessageButton"),
+  navProfileButton: document.getElementById("navProfileButton"),
+  updateNoticeOverlay: document.getElementById("updateNoticeOverlay")
 };
 
 let currentImportMode = storedData ? "json" : "sample";
 let currentData = normalizeData(storedData ?? sampleData);
+let currentMainTab = "record";
 let zipMediaEntries = new Map();
 let zipMediaUrlCache = new Map();
 let mediaObserver = null;
@@ -158,6 +189,7 @@ let indexedDbPromise = null;
 let persistStatePromise = Promise.resolve();
 let isHydratingPersistedState = false;
 let activeView = "home";
+let currentCreatedPosts = [];
 let detailReturnView = "home";
 let currentDetailPostId = "";
 let currentLightboxUrl = "";
@@ -176,6 +208,12 @@ let pendingImportSuccessPayload = null;
 let modalHistoryDepth = 0;
 let modalHistorySequence = 0;
 let suppressNextPopstateClose = false;
+let recordMomentBackgroundUrl = DEFAULT_RECORD_MOMENT_BACKGROUND;
+let recordMomentBackgroundObjectUrl = "";
+let recordMomentBackgroundBlob = null;
+let recordMomentText = "";
+let createPostImages = [];
+let createPostToastTimer = null;
 
 function createSvgDataUrl(svg) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg.trim())}`;
@@ -206,6 +244,478 @@ function sanitizeUiText(value, fallback = "") {
   }
 
   return looksLikeMojibake(text) ? fallback : text;
+}
+
+function formatRecordMomentDate(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${month}月${day}日 ${RECORD_MOMENT_WEEKDAYS[date.getDay()]}`;
+}
+
+function revokeRecordMomentBackgroundUrl() {
+  if (!recordMomentBackgroundObjectUrl) {
+    return;
+  }
+
+  URL.revokeObjectURL(recordMomentBackgroundObjectUrl);
+  recordMomentBackgroundObjectUrl = "";
+}
+
+function syncRecordMomentDraftPreview() {
+  const draft = window.localStorage.getItem(POST_DRAFT_STORAGE_KEY) || "";
+  recordMomentText = draft;
+  if (elements.recordMomentTextarea) {
+    elements.recordMomentTextarea.value = draft;
+    elements.recordMomentTextarea.placeholder = "我想说...";
+  }
+}
+
+function normalizeCreatedPostRecord(record) {
+  const timestamp = optionalString(record?.date) || optionalString(record?.timestamp) || formatCreatedPostDate();
+  const images = Array.isArray(record?.images) ? record.images : [];
+
+  return {
+    id: stringOrFallback(record?.id, `created-${Date.now()}`),
+    timestamp,
+    text: typeof record?.content === "string" ? record.content : typeof record?.text === "string" ? record.text : "",
+    media: images
+      .map((image, index) => {
+        const url = optionalString(image?.base64) || optionalString(image?.url);
+        if (!url) {
+          return null;
+        }
+
+        return {
+          type: "image",
+          filename: optionalString(image?.name) || `image-${index + 1}.jpg`,
+          lookupKey: "",
+          url
+        };
+      })
+      .filter(Boolean),
+    sortTime: Number(record?.createdAt) || Date.parse(timestamp) || Date.now()
+  };
+}
+
+function formatCreatedPostDate(date = new Date()) {
+  return [
+    date.getFullYear(),
+    pad2(date.getMonth() + 1),
+    pad2(date.getDate())
+  ].join("-") + ` ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+async function refreshCreatedPosts() {
+  try {
+    const records = await readCreatedPosts();
+    currentCreatedPosts = records.map(normalizeCreatedPostRecord);
+    render();
+  } catch (error) {
+    console.warn("Failed to refresh created posts.", error);
+  }
+}
+
+function updateCreatePostToast(message = "") {
+  if (createPostToastTimer) {
+    window.clearTimeout(createPostToastTimer);
+    createPostToastTimer = null;
+  }
+
+  const safeMessage = sanitizeUiText(message, "");
+  elements.createPostToast.textContent = safeMessage;
+  elements.createPostToast.classList.toggle("is-hidden", !safeMessage);
+
+  if (!safeMessage) {
+    return;
+  }
+
+  createPostToastTimer = window.setTimeout(() => {
+    elements.createPostToast.classList.add("is-hidden");
+    elements.createPostToast.textContent = "";
+    createPostToastTimer = null;
+  }, 2200);
+}
+
+function clearCreatePostImages() {
+  createPostImages.forEach((item) => {
+    if (item?.previewUrl) {
+      URL.revokeObjectURL(item.previewUrl);
+    }
+  });
+  createPostImages = [];
+}
+
+function buildCreatePostDraftSnapshot() {
+  const text = window.localStorage.getItem(POST_DRAFT_STORAGE_KEY) || "";
+
+  return {
+    text,
+    images: createPostImages
+      .slice(0, MAX_CREATE_POST_IMAGES)
+      .map((image, index) => {
+        const file = image?.file;
+        if (!(file instanceof Blob)) {
+          return null;
+        }
+
+        return {
+          id: optionalString(image?.id) || `create-image-${index + 1}`,
+          name: optionalString(file.name) || `image-${index + 1}.jpg`,
+          type: optionalString(file.type) || "image/jpeg",
+          lastModified: Number(file.lastModified) || Date.now(),
+          file
+        };
+      })
+      .filter(Boolean)
+  };
+}
+
+function restoreCreatePostDraft(draft) {
+  const draftText = optionalString(draft?.text);
+  if (draftText) {
+    window.localStorage.setItem(POST_DRAFT_STORAGE_KEY, draftText);
+  }
+
+  const nextText = draftText || window.localStorage.getItem(POST_DRAFT_STORAGE_KEY) || "";
+  recordMomentText = nextText;
+  elements.createPostTextarea.value = nextText;
+
+  clearCreatePostImages();
+  const draftImages = Array.isArray(draft?.images) ? draft.images.slice(0, MAX_CREATE_POST_IMAGES) : [];
+
+  createPostImages = draftImages
+    .map((image, index) => {
+      const sourceFile = image?.file;
+      if (!(sourceFile instanceof Blob)) {
+        return null;
+      }
+
+      const fileName = optionalString(image?.name) || `image-${index + 1}.jpg`;
+      const fileType = optionalString(image?.type) || sourceFile.type || "image/jpeg";
+      const restoredFile = new File([sourceFile], fileName, {
+        type: fileType,
+        lastModified: Number(image?.lastModified) || Date.now()
+      });
+
+      return {
+        id: optionalString(image?.id) || `create-image-${Date.now()}-${index + 1}`,
+        file: restoredFile,
+        previewUrl: URL.createObjectURL(restoredFile)
+      };
+    })
+    .filter(Boolean);
+
+  renderCreatePostImages();
+  syncRecordMomentDraftPreview();
+}
+
+function buildPersistedStateRecord() {
+  const snapshot = buildDebugData(currentData);
+
+  if (currentImportMode === "zip") {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, null, 2));
+  }
+
+  return {
+    importMode: currentImportMode,
+    data: snapshot,
+    zipFile: currentImportMode === "zip" ? persistedZipFile : null,
+    zipFileName: currentImportMode === "zip" ? persistedZipFileName : "",
+    coverBlob: coverPreviewBlob,
+    avatarBlob: avatarPreviewBlob,
+    recordMomentBackgroundBlob,
+    createPostDraft: buildCreatePostDraftSnapshot(),
+    updatedAt: Date.now()
+  };
+}
+
+function persistCreatePostDraft() {
+  if (isHydratingPersistedState || isInitializing) {
+    return;
+  }
+
+  queuePersistedState(buildPersistedStateRecord());
+}
+
+function renderCreatePostImages() {
+  const previousItems = elements.createPostImageGrid.querySelectorAll(".create-post-image-item");
+  previousItems.forEach((node) => node.remove());
+
+  const isAtImageLimit = createPostImages.length >= MAX_CREATE_POST_IMAGES;
+  elements.createPostAddButton.classList.toggle("is-hidden", isAtImageLimit);
+  elements.createPostAddButton.disabled = isAtImageLimit;
+
+  createPostImages.forEach((image) => {
+    const item = document.createElement("div");
+    item.className = "create-post-image-item";
+    item.dataset.imageId = image.id;
+
+    const preview = document.createElement("img");
+    preview.src = image.previewUrl;
+    preview.alt = image.file.name || "已选择图片";
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "create-post-remove";
+    removeButton.dataset.imageId = image.id;
+    removeButton.setAttribute("aria-label", "删除图片");
+    removeButton.textContent = "×";
+
+    item.appendChild(preview);
+    item.appendChild(removeButton);
+    elements.createPostImageGrid.appendChild(item);
+  });
+}
+
+function removeCreatePostImageById(imageId) {
+  const nextImageId = optionalString(imageId);
+  if (!nextImageId) {
+    return;
+  }
+
+  const targetIndex = createPostImages.findIndex((image) => image.id === nextImageId);
+  if (targetIndex < 0) {
+    return;
+  }
+
+  const [removed] = createPostImages.splice(targetIndex, 1);
+  if (removed?.previewUrl) {
+    URL.revokeObjectURL(removed.previewUrl);
+  }
+
+  renderCreatePostImages();
+  persistCreatePostDraft();
+}
+
+function appendCreatePostImages(files) {
+  const selectedFiles = Array.isArray(files) ? files : [];
+  if (selectedFiles.length === 0) {
+    return;
+  }
+
+  const remainingCount = Math.max(MAX_CREATE_POST_IMAGES - createPostImages.length, 0);
+  if (remainingCount === 0) {
+    updateCreatePostToast(`最多可上传${MAX_CREATE_POST_IMAGES}张图片`);
+    return;
+  }
+
+  const imageFiles = selectedFiles.filter((file) => file instanceof File && file.type.startsWith("image/"));
+  const filesToAdd = imageFiles.slice(0, remainingCount);
+
+  filesToAdd.forEach((file) => {
+    createPostImages.push({
+      id: `create-image-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      file,
+      previewUrl: URL.createObjectURL(file)
+    });
+  });
+
+  if (imageFiles.length > filesToAdd.length) {
+    updateCreatePostToast(`最多可上传${MAX_CREATE_POST_IMAGES}张图片`);
+  }
+
+  renderCreatePostImages();
+  persistCreatePostDraft();
+}
+
+function handleCreatePostImageInputChange(event) {
+  const files = [...(event.target.files ?? [])];
+  appendCreatePostImages(files);
+  event.target.value = "";
+}
+
+function handleCreatePostImageGridClick(event) {
+  const removeButton = event.target.closest(".create-post-remove");
+  if (!removeButton) {
+    return;
+  }
+
+  removeCreatePostImageById(removeButton.dataset.imageId);
+}
+
+function handleCreatePostDraftInput(event) {
+  const draft = event.target.value || "";
+  window.localStorage.setItem(POST_DRAFT_STORAGE_KEY, draft);
+  recordMomentText = draft;
+
+  if (elements.recordMomentTextarea.value !== draft) {
+    elements.recordMomentTextarea.value = draft;
+  }
+
+  persistCreatePostDraft();
+}
+
+function resetCreatePostComposer(options = {}) {
+  const { keepDraft = false } = options;
+  clearCreatePostImages();
+  renderCreatePostImages();
+  elements.createPostImageInput.value = "";
+
+  if (!keepDraft) {
+    window.localStorage.removeItem(POST_DRAFT_STORAGE_KEY);
+    recordMomentText = "";
+  }
+
+  const draft = keepDraft ? window.localStorage.getItem(POST_DRAFT_STORAGE_KEY) || "" : "";
+  elements.createPostTextarea.value = draft;
+  syncRecordMomentDraftPreview();
+  updateCreatePostToast("");
+  persistCreatePostDraft();
+}
+
+function openCreatePostView() {
+  if (activeView === "createPost") {
+    return;
+  }
+
+  elements.createPostTextarea.value = window.localStorage.getItem(POST_DRAFT_STORAGE_KEY) || "";
+  renderCreatePostImages();
+  closeSettingsMenu({ skipHistory: true });
+  closeLightbox({ skipHistory: true });
+  setView("createPost");
+  pushModalHistoryEntry("createPost");
+  window.requestAnimationFrame(() => {
+    elements.createPostTextarea.focus();
+  });
+}
+
+function closeCreatePostView(options = {}) {
+  if (activeView !== "createPost") {
+    return;
+  }
+
+  const { fromHistory = false, skipHistory = false } = options;
+  const applyClose = () => {
+    setView("home");
+    syncRecordMomentDraftPreview();
+    updateCreatePostToast("");
+  };
+
+  if (skipHistory || fromHistory) {
+    applyClose();
+    return;
+  }
+
+  syncManualCloseWithHistory(applyClose);
+}
+
+function buildComposerShareMediaItems() {
+  return createPostImages
+    .slice(0, 9)
+    .map((image, index) => ({
+      type: "image",
+      filename: optionalString(image?.file?.name) || `image-${index + 1}.jpg`,
+      url: optionalString(image?.previewUrl)
+    }))
+    .filter((item) => optionalString(item.url));
+}
+
+function createTemporaryComposerPosterNode() {
+  const posterTemplate = elements.postTemplate?.content?.querySelector(".export-poster-root");
+  if (!posterTemplate) {
+    return null;
+  }
+
+  const posterNode = posterTemplate.cloneNode(true);
+  posterNode.id = `export-poster-composer-${Date.now()}`;
+  posterNode.setAttribute("aria-hidden", "true");
+  document.body.appendChild(posterNode);
+  return posterNode;
+}
+
+async function exportComposerDraftAsImage(content) {
+  const posterNode = createTemporaryComposerPosterNode();
+  if (!posterNode) {
+    throw new Error("海报模板未初始化，请刷新后重试。");
+  }
+
+  try {
+    const profileName = optionalString(currentData?.profile?.name) || sampleData.profile.name;
+    const profileAvatar = avatarPreviewUrl || optionalString(currentData?.profile?.avatar) || DEFAULT_AVATAR_IMAGE;
+    const mediaItems = buildComposerShareMediaItems();
+    const draftPost = {
+      timestamp: formatCreatedPostDate(),
+      text: typeof content === "string" ? content : ""
+    };
+
+    updateExportPosterContent(posterNode, draftPost, profileName, profileAvatar, mediaItems);
+    await preloadPosterMediaBackgrounds(mediaItems);
+    await waitForNodeImages(posterNode);
+
+    posterNode.classList.add("is-capturing");
+    await new Promise((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(resolve);
+      });
+    });
+
+    const canvas = await window.html2canvas(posterNode, {
+      useCORS: true,
+      scale: 2,
+      backgroundColor: "#ffffff",
+      allowTaint: true
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const downloadLink = document.createElement("a");
+    downloadLink.href = imgData;
+    downloadLink.download = `动态分享_草稿_${timestamp}.png`;
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+  } finally {
+    posterNode.classList.remove("is-capturing");
+    posterNode.remove();
+  }
+}
+
+async function saveCreatedPost() {
+  const rawContent = elements.createPostTextarea.value || "";
+  const content = rawContent.trim();
+
+  if (!content && createPostImages.length === 0) {
+    updateCreatePostToast("写点文字或选几张图片再生成海报吧");
+    return;
+  }
+
+  if (typeof window.html2canvas !== "function") {
+    updateCreatePostToast("分享组件加载失败，请刷新页面后重试");
+    return;
+  }
+
+  elements.createPostSaveButton.disabled = true;
+  elements.createPostSaveButton.textContent = "生成中";
+  updateStatus("亲爱的可话er，图片生成中，请耐心等待一会~", "is-loading");
+
+  try {
+    await exportComposerDraftAsImage(rawContent);
+    updateStatus("海报已保存，草稿已保留。", "is-success");
+    updateCreatePostToast("海报已保存，草稿未清空");
+  } catch (error) {
+    const message = getSafeErrorMessage(error, "海报生成失败，请稍后重试。");
+    updateStatus(`海报生成失败：${message}`, "is-error");
+    updateCreatePostToast(message);
+  } finally {
+    elements.createPostSaveButton.disabled = false;
+    elements.createPostSaveButton.textContent = "保存";
+  }
+}
+
+function setRecordMomentBackgroundBlob(blob) {
+  revokeRecordMomentBackgroundUrl();
+  recordMomentBackgroundBlob = blob instanceof Blob ? blob : null;
+
+  if (recordMomentBackgroundBlob) {
+    recordMomentBackgroundObjectUrl = URL.createObjectURL(recordMomentBackgroundBlob);
+    recordMomentBackgroundUrl = recordMomentBackgroundObjectUrl;
+    return;
+  }
+
+  recordMomentBackgroundUrl = DEFAULT_RECORD_MOMENT_BACKGROUND;
 }
 
 function decodeArchiveTextBytes(bytes) {
@@ -341,6 +851,10 @@ function getTopOverlayType() {
     return "profileEdit";
   }
 
+  if (activeView === "createPost") {
+    return "createPost";
+  }
+
   if (activeView === "search") {
     return "search";
   }
@@ -370,6 +884,11 @@ function closeTopOverlayFromHistory() {
     return true;
   }
 
+  if (topOverlayType === "createPost") {
+    closeCreatePostView({ fromHistory: true });
+    return true;
+  }
+
   if (topOverlayType === "search") {
     closeSearchView({ fromHistory: true });
     return true;
@@ -384,6 +903,10 @@ function closeTopOverlayFromHistory() {
 }
 
 function closeTopOverlayManually() {
+  if (closeUpdateNotice()) {
+    return true;
+  }
+
   const topOverlayType = getTopOverlayType();
 
   if (topOverlayType === "lightbox") {
@@ -398,6 +921,11 @@ function closeTopOverlayManually() {
 
   if (topOverlayType === "profileEdit") {
     closeProfileEditView();
+    return true;
+  }
+
+  if (topOverlayType === "createPost") {
+    closeCreatePostView();
     return true;
   }
 
@@ -593,6 +1121,11 @@ function getIndexedDb() {
       if (!db.objectStoreNames.contains(INDEXED_DB_STORE)) {
         db.createObjectStore(INDEXED_DB_STORE, { keyPath: "id" });
       }
+
+      if (!db.objectStoreNames.contains(INDEXED_DB_POSTS_STORE)) {
+        const postsStore = db.createObjectStore(INDEXED_DB_POSTS_STORE, { keyPath: "id" });
+        postsStore.createIndex("createdAt", "createdAt", { unique: false });
+      }
     };
 
     request.onsuccess = () => resolve(request.result);
@@ -666,22 +1199,44 @@ function persistData() {
     return;
   }
 
-  const snapshot = buildDebugData(currentData);
+  queuePersistedState(buildPersistedStateRecord());
+}
 
-  if (currentImportMode === "zip") {
-    window.localStorage.removeItem(STORAGE_KEY);
-  } else {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot, null, 2));
+async function readCreatedPosts() {
+  const db = await getIndexedDb();
+
+  if (!db || !db.objectStoreNames.contains(INDEXED_DB_POSTS_STORE)) {
+    return [];
   }
 
-  queuePersistedState({
-    importMode: currentImportMode,
-    data: snapshot,
-    zipFile: currentImportMode === "zip" ? persistedZipFile : null,
-    zipFileName: currentImportMode === "zip" ? persistedZipFileName : "",
-    coverBlob: coverPreviewBlob,
-    avatarBlob: avatarPreviewBlob,
-    updatedAt: Date.now()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(INDEXED_DB_POSTS_STORE, "readonly");
+    const store = transaction.objectStore(INDEXED_DB_POSTS_STORE);
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const result = Array.isArray(request.result) ? request.result : [];
+      result.sort((left, right) => Number(right?.createdAt || 0) - Number(left?.createdAt || 0));
+      resolve(result);
+    };
+    request.onerror = () => reject(request.error || new Error("Failed to read created posts."));
+  });
+}
+
+async function addCreatedPost(record) {
+  const db = await getIndexedDb();
+
+  if (!db || !db.objectStoreNames.contains(INDEXED_DB_POSTS_STORE)) {
+    throw new Error("本地数据库不可用，暂时无法保存动态。");
+  }
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(INDEXED_DB_POSTS_STORE, "readwrite");
+    const store = transaction.objectStore(INDEXED_DB_POSTS_STORE);
+    const request = store.add(record);
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("保存动态失败。"));
   });
 }
 
@@ -723,8 +1278,8 @@ function updateStatus(message, type = "") {
 }
 
 function updateImportSummary() {
-  const postCount = currentData.posts.length;
-  const mediaCount = currentData.posts.reduce((sum, post) => sum + post.media.length, 0);
+  const postCount = currentData.posts.length + currentCreatedPosts.length;
+  const mediaCount = [...currentData.posts, ...currentCreatedPosts].reduce((sum, post) => sum + post.media.length, 0);
 
   if (currentImportMode === "zip") {
     elements.importSummary.textContent = `\u5df2\u5bfc\u5165 ZIP\uff1a${postCount} \u6761\u52a8\u6001\uff0c${mediaCount} \u4e2a\u56fe\u7247/\u89c6\u9891\u3002`;
@@ -794,17 +1349,69 @@ function syncOverlayViewport() {
 }
 
 function refreshOverlayState() {
+  const isUpdateNoticeVisible =
+    !!elements.updateNoticeOverlay && !elements.updateNoticeOverlay.classList.contains("is-hidden");
   const hasOverlay =
     activeView !== "home" ||
     !elements.settingsMenu.classList.contains("is-hidden") ||
-    !elements.lightboxView.classList.contains("is-hidden");
+    !elements.lightboxView.classList.contains("is-hidden") ||
+    isUpdateNoticeVisible;
 
   if (hasOverlay) {
     syncOverlayViewport();
   }
 
   elements.phoneScreen.classList.toggle("is-overlay-active", hasOverlay);
-  elements.fastScroller.classList.toggle("is-hidden", hasOverlay);
+  elements.fastScroller.classList.toggle("is-hidden", hasOverlay || currentMainTab !== "profile");
+}
+
+function hasDismissedUpdateNotice() {
+  if (!isClientRuntime) {
+    return true;
+  }
+
+  try {
+    return window.localStorage.getItem(UPDATE_NOTICE_DISMISSED_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markUpdateNoticeDismissed() {
+  if (!isClientRuntime) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(UPDATE_NOTICE_DISMISSED_KEY, "1");
+  } catch (error) {
+    // Ignore storage write failures in restricted contexts.
+  }
+}
+
+function openUpdateNoticeIfNeeded() {
+  if (!elements.updateNoticeOverlay || hasDismissedUpdateNotice()) {
+    return;
+  }
+
+  elements.updateNoticeOverlay.classList.remove("is-hidden");
+  elements.updateNoticeOverlay.setAttribute("aria-hidden", "false");
+  refreshOverlayState();
+}
+
+function closeUpdateNotice(options = {}) {
+  if (!elements.updateNoticeOverlay || elements.updateNoticeOverlay.classList.contains("is-hidden")) {
+    return false;
+  }
+
+  const { persist = true } = options;
+  elements.updateNoticeOverlay.classList.add("is-hidden");
+  elements.updateNoticeOverlay.setAttribute("aria-hidden", "true");
+  if (persist) {
+    markUpdateNoticeDismissed();
+  }
+  refreshOverlayState();
+  return true;
 }
 
 function clearFastScrollerHideTimer() {
@@ -817,7 +1424,7 @@ function clearFastScrollerHideTimer() {
 }
 
 function showFastScrollerTemporarily() {
-  if (activeView !== "home") {
+  if (activeView !== "home" || currentMainTab !== "profile") {
     return;
   }
 
@@ -847,7 +1454,7 @@ function updateFastScrollerThumb() {
     return;
   }
 
-  if (activeView !== "home") {
+  if (activeView !== "home" || currentMainTab !== "profile") {
     return;
   }
 
@@ -874,7 +1481,7 @@ function scrollWithFastScroller(clientY) {
 }
 
 function handleFastScrollerPointerStart(clientY) {
-  if (activeView !== "home") {
+  if (activeView !== "home" || currentMainTab !== "profile") {
     return;
   }
 
@@ -900,9 +1507,84 @@ function handleFastScrollerPointerEnd() {
   showFastScrollerTemporarily();
 }
 
+function renderRecordMomentView() {
+  elements.recordMomentBackgroundImage.src = recordMomentBackgroundUrl || DEFAULT_RECORD_MOMENT_BACKGROUND;
+  elements.recordMomentDate.textContent = formatRecordMomentDate(new Date());
+  if (elements.recordMomentTextarea.value !== recordMomentText) {
+    elements.recordMomentTextarea.value = recordMomentText;
+  }
+}
+
+function updateMainTabUI() {
+  const showRecord = currentMainTab === "record";
+  const showProfile = currentMainTab === "profile";
+
+  elements.recordMomentView.classList.toggle("is-hidden", !showRecord);
+  elements.profilePageRoot.classList.toggle("is-hidden", !showProfile);
+
+  elements.navHomeButton.classList.toggle("is-active", showRecord);
+  elements.navHomeButton.classList.toggle("is-muted", !showRecord);
+  elements.navMessageButton?.classList.add("is-muted");
+  elements.navMessageButton?.classList.remove("is-active");
+  elements.navProfileButton.classList.toggle("is-active", showProfile);
+  elements.navProfileButton.classList.toggle("is-muted", !showProfile);
+
+  refreshOverlayState();
+  updateFastScrollerThumb();
+}
+
+function setMainTab(tab) {
+  if (tab !== "record" && tab !== "profile") {
+    return;
+  }
+
+  if (currentMainTab === tab) {
+    return;
+  }
+
+  closeSettingsMenu({ skipHistory: true });
+  closeLightbox({ skipHistory: true });
+  closeSearchView({ skipHistory: true });
+  closeDetailView({ skipHistory: true });
+  closeProfileEditView({ skipHistory: true });
+  currentMainTab = tab;
+
+  if (tab === "record") {
+    renderRecordMomentView();
+  }
+
+  elements.phoneScreen.scrollTo({ top: 0, behavior: "auto" });
+  updateMainTabUI();
+}
+
+function applyRecordMomentBackground(file) {
+  if (!file) {
+    elements.recordMomentBackgroundInput.value = "";
+    return;
+  }
+
+  if (!/^image\//i.test(file.type) && !IMAGE_FILE_REGEX.test(file.name)) {
+    elements.recordMomentBackgroundInput.value = "";
+    updateStatus("请选择图片文件作为此刻背景图。", "is-error");
+    return;
+  }
+
+  setRecordMomentBackgroundBlob(file);
+  elements.recordMomentBackgroundInput.value = "";
+  renderRecordMomentView();
+  persistData();
+  updateStatus("此刻背景图已更新，仅在当前浏览器本地预览。", "is-success");
+}
+
 function render() {
   const { profile, posts } = currentData;
-  const metaBits = [profile.city, profile.constellation, `${profile.entriesCount} \u6761`].filter(Boolean);
+  const mergedPosts = [...currentCreatedPosts, ...posts].sort((left, right) => {
+    const leftTime = Number(left?.sortTime) || Date.parse(left?.timestamp || "") || 0;
+    const rightTime = Number(right?.sortTime) || Date.parse(right?.timestamp || "") || 0;
+    return rightTime - leftTime;
+  });
+  const totalEntries = posts.length + currentCreatedPosts.length;
+  const metaBits = [profile.city, profile.constellation, `${totalEntries} 条`].filter(Boolean);
   const avatarWrap = elements.avatarImage.parentElement;
   const coverSource = coverPreviewUrl || DEFAULT_COVER_IMAGE;
   const avatarSource = avatarPreviewUrl || profile.avatar || DEFAULT_AVATAR_IMAGE;
@@ -927,15 +1609,16 @@ function render() {
     badge.classList.toggle("is-hidden", !profile.vip);
   });
 
-  renderPostList(elements.postsContainer, posts, {
+  renderPostList(elements.postsContainer, mergedPosts, {
     emptyMessage: "\u6682\u65e0\u52a8\u6001\uff0c\u5bfc\u5165 ZIP \u540e\u4f1a\u663e\u793a\u5728\u8fd9\u91cc\u3002"
   });
 
   updateSearchResults();
   renderCurrentDetailIfNeeded();
+  renderRecordMomentView();
+  updateMainTabUI();
   updateImportSummary();
   elements.initLoading.classList.remove("is-visible");
-  updateFastScrollerThumb();
   persistData();
 }
 
@@ -945,10 +1628,258 @@ function renderInitializationState() {
     '<article class="post-card"><p class="post-text is-empty">正在恢复你上次导入的数据...</p></article>';
 }
 
+function buildExportPosterDomId(postId) {
+  const rawPostId = optionalString(String(postId)) || "unknown";
+  const safePostId = rawPostId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `export-poster-${safePostId}`;
+}
+
+function renderExportPosterMediaItems(galleryNode, mediaItems) {
+  if (!galleryNode) {
+    return;
+  }
+
+  galleryNode.innerHTML = "";
+
+  (Array.isArray(mediaItems) ? mediaItems : []).slice(0, 9).forEach((item, index) => {
+    const tile = document.createElement("div");
+    tile.className = "export-poster-gallery-item aspect-square";
+
+    const image = document.createElement("div");
+    const imageUrl = optionalString(item?.url) || DEFAULT_MEDIA_IMAGE;
+    image.className = "export-poster-image w-full h-full aspect-square bg-cover bg-center bg-no-repeat rounded-sm";
+    image.setAttribute("role", "img");
+    image.setAttribute("aria-label", optionalString(item?.filename) || `动态配图 ${index + 1}`);
+    image.style.backgroundImage = `url("${imageUrl.replace(/"/g, '\\"')}")`;
+    tile.appendChild(image);
+
+    if (item?.type === "video") {
+      const chip = document.createElement("span");
+      chip.className = "export-poster-video-chip";
+      chip.textContent = "视频";
+      tile.appendChild(chip);
+    }
+
+    galleryNode.appendChild(tile);
+  });
+}
+
+function updateExportPosterContent(posterNode, post, profileName, profileAvatar, mediaItems) {
+  if (!posterNode || !post) {
+    return;
+  }
+
+  const avatarNode = posterNode.querySelector(".export-poster-avatar");
+  const nameNode = posterNode.querySelector(".export-poster-name");
+  const timeNode = posterNode.querySelector(".export-poster-time");
+  const textNode = posterNode.querySelector(".export-poster-text");
+  const galleryNode = posterNode.querySelector(".export-poster-gallery");
+
+  if (avatarNode) {
+    avatarNode.src = profileAvatar;
+    avatarNode.alt = `${profileName} 的头像`;
+  }
+
+  if (nameNode) {
+    nameNode.textContent = profileName;
+  }
+
+  if (timeNode) {
+    timeNode.textContent = post.timestamp;
+  }
+
+  if (textNode) {
+    textNode.textContent = optionalString(post.text) || "这条动态没有文字内容。";
+  }
+
+  renderExportPosterMediaItems(galleryNode, mediaItems);
+}
+
+async function resolveExportPosterMediaItems(post) {
+  const sourceMedia = Array.isArray(post?.media) ? post.media.slice(0, 9) : [];
+
+  return Promise.all(
+    sourceMedia.map(async (mediaItem) => {
+      const fallbackUrl = mediaItem?.type === "video"
+        ? DEFAULT_MEDIA_IMAGE
+        : optionalString(mediaItem?.url) || DEFAULT_MEDIA_IMAGE;
+      try {
+        if (mediaItem?.type === "video") {
+          return {
+            type: mediaItem?.type,
+            filename: mediaItem?.filename,
+            url: fallbackUrl
+          };
+        }
+
+        const resolvedUrl = await resolveMediaUrl(mediaItem);
+        return {
+          type: mediaItem?.type,
+          filename: mediaItem?.filename,
+          url: optionalString(resolvedUrl) || fallbackUrl
+        };
+      } catch (error) {
+        return {
+          type: mediaItem?.type,
+          filename: mediaItem?.filename,
+          url: fallbackUrl
+        };
+      }
+    })
+  );
+}
+
+async function preloadPosterMediaBackgrounds(mediaItems) {
+  const imagesToPreload = (Array.isArray(mediaItems) ? mediaItems : [])
+    .filter((item) => item?.type !== "video")
+    .map((item) => optionalString(item?.url))
+    .filter(Boolean);
+
+  if (imagesToPreload.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    imagesToPreload.map(
+      (url) =>
+        new Promise((resolve) => {
+          const image = new Image();
+          if (/^https?:\/\//i.test(url)) {
+            image.crossOrigin = "anonymous";
+          }
+          image.onload = () => resolve();
+          image.onerror = () => resolve();
+          image.src = url;
+        })
+    )
+  );
+}
+
+async function waitForNodeImages(node) {
+  if (!node) {
+    return;
+  }
+
+  const images = [...node.querySelectorAll("img")];
+  if (images.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    images.map((image) => {
+      if (image.complete) {
+        return Promise.resolve();
+      }
+
+      return new Promise((resolve) => {
+        image.addEventListener("load", resolve, { once: true });
+        image.addEventListener("error", resolve, { once: true });
+      });
+    })
+  );
+}
+
+async function prepareExportPosterNode(postId) {
+  const post = findPostById(postId);
+  if (!post) {
+    return null;
+  }
+
+  const posterNode = document.getElementById(buildExportPosterDomId(postId));
+  if (!posterNode) {
+    return null;
+  }
+
+  const profileName = optionalString(currentData?.profile?.name) || sampleData.profile.name;
+  const profileAvatar = avatarPreviewUrl || optionalString(currentData?.profile?.avatar) || DEFAULT_AVATAR_IMAGE;
+  const fallbackMedia = post.media.slice(0, 9).map((mediaItem) => ({
+    type: mediaItem?.type,
+    filename: mediaItem?.filename,
+    url: mediaItem?.type === "video"
+      ? DEFAULT_MEDIA_IMAGE
+      : optionalString(mediaItem?.url) || DEFAULT_MEDIA_IMAGE
+  }));
+
+  updateExportPosterContent(posterNode, post, profileName, profileAvatar, fallbackMedia);
+  const resolvedMedia = await resolveExportPosterMediaItems(post);
+  await preloadPosterMediaBackgrounds(resolvedMedia);
+  updateExportPosterContent(posterNode, post, profileName, profileAvatar, resolvedMedia);
+  await waitForNodeImages(posterNode);
+  return posterNode;
+}
+
+function setShareButtonLoadingState(button, isLoading) {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (!button.dataset.defaultAriaLabel) {
+    button.dataset.defaultAriaLabel = button.getAttribute("aria-label") || "生成分享长图";
+  }
+
+  button.disabled = isLoading;
+  button.classList.toggle("is-loading", isLoading);
+  button.setAttribute("aria-busy", String(isLoading));
+  button.setAttribute("aria-label", isLoading ? "生成中..." : button.dataset.defaultAriaLabel);
+}
+
+async function handleShareToImage(postId, button) {
+  if (typeof window.html2canvas !== "function") {
+    updateStatus("分享组件加载失败，请刷新页面后重试。", "is-error");
+    return;
+  }
+
+  setShareButtonLoadingState(button, true);
+  updateStatus("亲爱的可话er，图片生成中，请耐心等待一会~", "is-loading");
+
+  let posterNode = null;
+  try {
+    posterNode = await prepareExportPosterNode(postId);
+    if (!posterNode) {
+      updateStatus("未找到要分享的海报节点。", "is-error");
+      return;
+    }
+
+    posterNode.classList.add("is-capturing");
+    await new Promise((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(resolve);
+      });
+    });
+
+    const canvas = await window.html2canvas(posterNode, {
+      useCORS: true,
+      scale: 2,
+      backgroundColor: "#ffffff",
+      allowTaint: true
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const safeDownloadId = String(postId).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") || "post";
+    const downloadLink = document.createElement("a");
+    downloadLink.href = imgData;
+    downloadLink.download = `动态分享_${safeDownloadId}.png`;
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+    updateStatus("海报已保存。", "is-success");
+  } catch (error) {
+    console.warn("Failed to generate share poster.", error);
+    updateStatus(`海报生成失败：${getSafeErrorMessage(error, "请稍后重试。")}`, "is-error");
+  } finally {
+    if (posterNode) {
+      posterNode.classList.remove("is-capturing");
+    }
+    setShareButtonLoadingState(button, false);
+  }
+}
+
 function renderPostList(container, posts, options = {}) {
   const {
     emptyMessage = "\u6682\u65e0\u76f8\u5173\u52a8\u6001\u3002",
-    truncateText = true
+    truncateText = true,
+    showShareAction = container === elements.postsContainer
   } = options;
 
   container.innerHTML = "";
@@ -965,10 +1896,37 @@ function renderPostList(container, posts, options = {}) {
     const text = fragment.querySelector(".post-text");
     const gallery = fragment.querySelector(".post-gallery");
     const moreButton = fragment.querySelector(".more-button");
+    const authorAvatar = fragment.querySelector(".post-author-avatar");
+    const authorName = fragment.querySelector(".post-author-name");
+    const shareButton = fragment.querySelector(".post-share-button");
+    const posterNode = fragment.querySelector(".export-poster-root");
+    const profileName = optionalString(currentData?.profile?.name) || sampleData.profile.name;
+    const profileAvatar = avatarPreviewUrl || optionalString(currentData?.profile?.avatar) || DEFAULT_AVATAR_IMAGE;
 
     card.dataset.postId = post.id;
     time.textContent = post.timestamp;
-    moreButton.dataset.postId = post.id;
+    moreButton.classList.toggle("is-hidden", !showShareAction);
+    authorAvatar.src = profileAvatar;
+    authorAvatar.alt = `${profileName} 的头像`;
+    authorName.textContent = profileName;
+    if (shareButton) {
+      shareButton.dataset.postId = post.id;
+    }
+    if (posterNode) {
+      if (showShareAction) {
+        posterNode.id = buildExportPosterDomId(post.id);
+        const fallbackMedia = post.media.slice(0, 9).map((mediaItem) => ({
+          type: mediaItem?.type,
+          filename: mediaItem?.filename,
+          url: mediaItem?.type === "video"
+            ? DEFAULT_MEDIA_IMAGE
+            : optionalString(mediaItem?.url) || DEFAULT_MEDIA_IMAGE
+        }));
+        updateExportPosterContent(posterNode, post, profileName, profileAvatar, fallbackMedia);
+      } else {
+        posterNode.remove();
+      }
+    }
     card.classList.add("post-card-clickable");
     setPostText(text, post, truncateText);
     buildGallery(gallery, post.media, {
@@ -1044,7 +2002,7 @@ function buildGallery(container, media, options = {}) {
 }
 
 function findPostById(postId) {
-  return currentData.posts.find((post) => post.id === postId) ?? null;
+  return [...currentCreatedPosts, ...currentData.posts].find((post) => post.id === postId) ?? null;
 }
 
 function escapeRegExp(value) {
@@ -1079,7 +2037,7 @@ function updateSearchResults(options = {}) {
   }
 
   const normalizedKeyword = keyword.toLowerCase();
-  const results = currentData.posts.filter((post) => {
+  const results = [...currentCreatedPosts, ...currentData.posts].filter((post) => {
     const haystack = `${post.timestamp}\n${post.text}`.toLowerCase();
     return haystack.includes(normalizedKeyword);
   });
@@ -1132,6 +2090,8 @@ function setView(view) {
   elements.detailView.setAttribute("aria-hidden", String(view !== "detail"));
   elements.profileEditView.classList.toggle("is-hidden", view !== "profileEdit");
   elements.profileEditView.setAttribute("aria-hidden", String(view !== "profileEdit"));
+  elements.createPostView.classList.toggle("is-hidden", view !== "createPost");
+  elements.createPostView.setAttribute("aria-hidden", String(view !== "createPost"));
   refreshOverlayState();
 }
 
@@ -2105,6 +3065,7 @@ function resetSessionState() {
   clearZipMediaContext();
   setPreviewBlob("cover", null);
   setPreviewBlob("avatar", null);
+  setRecordMomentBackgroundBlob(null);
   persistedZipFile = null;
   persistedZipFileName = "";
   currentImportMode = "sample";
@@ -2143,6 +3104,8 @@ async function hydratePersistedState() {
 
     setPreviewBlob("cover", persistedState.coverBlob);
     setPreviewBlob("avatar", persistedState.avatarBlob);
+    setRecordMomentBackgroundBlob(persistedState.recordMomentBackgroundBlob);
+    restoreCreatePostDraft(persistedState.createPostDraft);
 
     if (persistedState.importMode === "zip" && persistedState.zipFile instanceof Blob) {
       const restoredFile = new File(
@@ -2203,6 +3166,17 @@ function handlePostAction(event) {
     return;
   }
 
+  const shareButton = eventElement.closest(".post-share-button");
+  if (shareButton) {
+    const postId = shareButton.dataset.postId || shareButton.closest(".post-card")?.dataset.postId;
+    if (postId) {
+      event.preventDefault();
+      event.stopPropagation();
+      void handleShareToImage(postId, shareButton);
+    }
+    return;
+  }
+
   const previewImage = eventElement.closest(".previewable-image");
   if (previewImage) {
     const previewItems = collectPreviewImagesFromCard(previewImage);
@@ -2212,7 +3186,7 @@ function handlePostAction(event) {
     return;
   }
 
-  const trigger = eventElement.closest(".more-button, .expand-link");
+  const trigger = eventElement.closest(".expand-link");
   if (trigger) {
     const postId = trigger.dataset.postId || trigger.closest(".post-card")?.dataset.postId;
     if (!postId) {
@@ -2331,12 +3305,49 @@ if (isClientRuntime) {
   elements.settingsClose.addEventListener("click", closeSettingsMenu);
   elements.settingsBackdrop.addEventListener("click", closeSettingsMenu);
   elements.clearSessionButton.addEventListener("click", clearCurrentSession);
+  elements.updateNoticeOverlay?.addEventListener("click", () => {
+    closeUpdateNotice();
+  });
+  elements.navHomeButton.addEventListener("click", () => {
+    setMainTab("record");
+  });
+  elements.navProfileButton.addEventListener("click", () => {
+    setMainTab("profile");
+  });
   elements.coverEditButton.addEventListener("click", () => {
     elements.coverInput.click();
   });
   elements.avatarEditButton.addEventListener("click", () => {
     elements.avatarInput.click();
   });
+  elements.recordMomentHero.addEventListener("click", () => {
+    elements.recordMomentBackgroundInput.click();
+  });
+  elements.recordMomentHero.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    elements.recordMomentBackgroundInput.click();
+  });
+  elements.recordMomentBackgroundInput.addEventListener("change", (event) => {
+    const [file] = event.target.files ?? [];
+    applyRecordMomentBackground(file);
+  });
+  elements.recordMomentEditorCard.addEventListener("click", () => {
+    openCreatePostView();
+  });
+  elements.createPostBackButton.addEventListener("click", closeCreatePostView);
+  elements.createPostSaveButton.addEventListener("click", () => {
+    void saveCreatedPost();
+  });
+  elements.createPostAddButton.addEventListener("click", () => {
+    elements.createPostImageInput.click();
+  });
+  elements.createPostTextarea.addEventListener("input", handleCreatePostDraftInput);
+  elements.createPostImageInput.addEventListener("change", handleCreatePostImageInputChange);
+  elements.createPostImageGrid.addEventListener("click", handleCreatePostImageGridClick);
   elements.coverInput.addEventListener("change", (event) => {
     const [file] = event.target.files ?? [];
     applyImagePreview("cover", file);
@@ -2420,6 +3431,9 @@ if (isClientRuntime) {
       closeTopOverlayManually();
     }
   });
+  window.addEventListener("beforeunload", () => {
+    revokeRecordMomentBackgroundUrl();
+  });
 
   window.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -2454,6 +3468,7 @@ async function bootstrapApp() {
   await hydratePersistedState();
   isInitializing = false;
   render();
+  openUpdateNoticeIfNeeded();
 }
 
 if (isClientRuntime) {

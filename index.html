@@ -12,69 +12,117 @@
           person_profiles: 'identified_only',
       })
     </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      referrerpolicy="no-referrer"
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <div class="phone-frame">
         <div class="phone-screen" id="phoneScreen">
-          <header class="top-bar">
-            <div class="top-actions">
-              <button class="action-circle" id="searchButton" type="button" aria-label="&#25628;&#32034;">
-                <span class="icon-search"></span>
-              </button>
-              <button class="action-circle" id="editProfileButton" type="button" aria-label="&#32534;&#36753;&#36164;&#26009;">
-                <span class="icon-edit"></span>
-              </button>
-              <button class="action-circle" id="settingsButton" type="button" aria-label="&#25171;&#24320;&#35774;&#32622;">
-                <span class="icon-gear"></span>
-              </button>
-            </div>
-          </header>
+          <section id="recordMomentView" class="record-moment-view">
+            <input id="recordMomentBackgroundInput" type="file" accept="image/*" hidden />
+            <section id="recordMomentHero" class="record-moment-hero" role="button" tabindex="0" aria-label="更换此刻背景图">
+              <img id="recordMomentBackgroundImage" class="record-moment-background-image" alt="此刻背景图" />
+              <div class="record-moment-fade"></div>
+              <div class="record-moment-copy">
+                <p id="recordMomentDate" class="record-moment-date"></p>
+                <h2 class="record-moment-title">此刻，说你想说的话~</h2>
+              </div>
+            </section>
 
-          <section class="hero-section">
-            <div class="hero-background">
-              <img id="coverImage" class="cover-image" alt="&#39030;&#37096;&#32972;&#26223;&#22270;" />
-            </div>
+            <main class="record-moment-sheet">
+              <div id="recordMomentEditorCard" class="record-moment-card">
+                <textarea
+                  id="recordMomentTextarea"
+                  class="record-moment-textarea"
+                  placeholder="我想说..."
+                  readonly
+                ></textarea>
+              </div>
+            </main>
           </section>
 
-          <main class="content-sheet">
-            <div class="avatar-wrap">
-              <img id="avatarImage" class="avatar-image" alt="&#29992;&#25143;&#22836;&#20687;" />
-              <div class="avatar-placeholder" id="avatarPlaceholder">
-                <span class="avatar-letter" id="avatarLetter">&#21407;</span>
+          <div id="profilePageRoot" class="profile-page-root is-hidden">
+            <header class="top-bar" id="topBar">
+              <div class="top-actions">
+                <button class="action-circle" id="searchButton" type="button" aria-label="&#25628;&#32034;">
+                  <i class="fa-solid fa-magnifying-glass action-glyph" aria-hidden="true"></i>
+                </button>
+                <button class="action-circle" id="editProfileButton" type="button" aria-label="&#32534;&#36753;&#36164;&#26009;">
+                  <i class="fa-solid fa-user-pen action-glyph" aria-hidden="true"></i>
+                </button>
+                <button class="action-circle" id="settingsButton" type="button" aria-label="&#25171;&#24320;&#35774;&#32622;">
+                  <i class="fa-solid fa-file-import action-glyph" aria-hidden="true"></i>
+                </button>
               </div>
-            </div>
+            </header>
 
-            <section class="profile-panel">
-              <div class="profile-title">
-                <h1 id="profileName">&#21407;&#23376;&#26053;&#36884;</h1>
-                <span class="vip-badge">
-                  <span class="icon-crown icon-crown-pink"></span>
-                  VIP
-                </span>
+            <section class="hero-section">
+              <div class="hero-background">
+                <img id="coverImage" class="cover-image" alt="&#39030;&#37096;&#32972;&#26223;&#22270;" />
               </div>
-              <p class="profile-meta" id="profileMeta"></p>
-              <p class="profile-submeta" id="profileSubmetaRow">IP <span id="ipLocation"></span></p>
             </section>
 
-            <section class="feed-section">
-              <div id="initLoading" class="init-loading">正在从本地恢复数据...</div>
-              <div id="postsContainer" class="posts-container"></div>
-            </section>
-          </main>
+            <main class="content-sheet">
+              <div class="avatar-wrap">
+                <img id="avatarImage" class="avatar-image" alt="&#29992;&#25143;&#22836;&#20687;" />
+                <div class="avatar-placeholder" id="avatarPlaceholder">
+                  <span class="avatar-letter" id="avatarLetter">&#21407;</span>
+                </div>
+              </div>
+
+              <section class="profile-panel">
+                <div class="profile-title">
+                  <h1 id="profileName">&#21407;&#23376;&#26053;&#36884;</h1>
+                  <span class="vip-badge">
+                    <span class="icon-crown icon-crown-pink"></span>
+                    VIP
+                  </span>
+                </div>
+                <p class="profile-meta" id="profileMeta"></p>
+                <p class="profile-submeta" id="profileSubmetaRow">IP <span id="ipLocation"></span></p>
+              </section>
+
+              <section class="feed-section">
+                <div id="initLoading" class="init-loading">正在从本地恢复数据...</div>
+                <div id="postsContainer" class="posts-container"></div>
+              </section>
+            </main>
+          </div>
 
           <nav class="bottom-nav">
-            <button class="nav-item is-muted" type="button" aria-label="&#39318;&#39029;">
-              <span class="icon-home"></span>
+            <button id="navHomeButton" class="nav-item is-active" type="button" aria-label="&#39318;&#39029;">
+              <i class="fa-solid fa-house nav-glyph" aria-hidden="true"></i>
             </button>
-            <button class="nav-item is-muted" type="button" aria-label="&#21160;&#24577;">
-              <span class="icon-chat"></span>
-            </button>
-            <button class="nav-item is-active" type="button" aria-label="&#25105;&#30340;">
-              <span class="icon-user"></span>
+            <button id="navProfileButton" class="nav-item is-muted" type="button" aria-label="&#25105;&#30340;">
+              <i class="fa-solid fa-circle-user nav-glyph" aria-hidden="true"></i>
             </button>
           </nav>
+
+          <section id="updateNoticeOverlay" class="update-notice-overlay is-hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="更新提示">
+            <article class="update-notice-card">
+              <p class="update-notice-text">
+                亲爱的可话er们：
+                <br />
+                <br />
+                主页更新了，我尽力还原了可话的主页
+                <br />
+                背景单击可修改，大家可以在里面码字，点保存时可以生成一张分享图
+                <br />
+                由于没有登录系统和服务器，所以只能保存图片到本地储存。
+                <br />
+                <br />
+                另外再历史动态，每条动态的右上角也可以一键导出排好版的图片了
+              </p>
+              <p class="update-notice-sign">——原子</p>
+              <p class="update-notice-hint">点击任意位置关闭</p>
+            </article>
+          </section>
 
           <div id="fastScroller" class="fast-scroller" aria-hidden="true">
             <div class="fast-scroller-track">
@@ -113,10 +161,14 @@
           <section id="searchView" class="app-view is-hidden" aria-hidden="true">
             <header class="subpage-header">
               <button id="searchBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#20027;&#39029;">
-                <span class="icon-back"></span>
+                <svg class="back-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                </svg>
               </button>
               <label class="search-field">
-                <span class="icon-search search-field-icon"></span>
+                <svg class="search-field-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6 6a7.5 7.5 0 0 0 10.65 10.65Z" />
+                </svg>
                 <input id="searchInput" type="search" placeholder="&#25628;&#32034;&#21160;&#24577;&#20869;&#23481;" />
               </label>
             </header>
@@ -129,7 +181,9 @@
           <section id="detailView" class="app-view is-hidden" aria-hidden="true">
             <header class="subpage-header detail-header">
               <button id="detailBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#19978;&#19968;&#39029;">
-                <span class="icon-back"></span>
+                <svg class="back-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                </svg>
               </button>
               <div class="detail-header-copy">
                 <p>&#21160;&#24577;&#35814;&#24773;</p>
@@ -149,7 +203,9 @@
           <section id="profileEditView" class="app-view is-hidden" aria-hidden="true">
             <header class="subpage-header detail-header">
               <button id="profileEditBackButton" class="subpage-icon-button" type="button" aria-label="&#36820;&#22238;&#20027;&#39029;">
-                <span class="icon-back"></span>
+                <svg class="back-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                </svg>
               </button>
               <div class="detail-header-copy">
                 <p>&#32534;&#36753;&#36164;&#26009;</p>
@@ -188,6 +244,34 @@
             </main>
           </section>
 
+          <section id="createPostView" class="app-view is-hidden" aria-hidden="true">
+            <header class="subpage-header create-post-header">
+              <button id="createPostBackButton" class="subpage-icon-button" type="button" aria-label="返回主页">
+                <svg class="back-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                </svg>
+              </button>
+              <button id="createPostSaveButton" class="create-post-save" type="button">保存</button>
+            </header>
+            <main class="subpage-body create-post-body">
+              <div class="create-post-panel">
+                <textarea
+                  id="createPostTextarea"
+                  class="create-post-textarea"
+                  placeholder="我想说..."
+                ></textarea>
+
+                <input id="createPostImageInput" type="file" accept="image/*" multiple hidden />
+                <div id="createPostImageGrid" class="create-post-image-grid">
+                  <button id="createPostAddButton" class="create-post-add-button" type="button" aria-label="添加图片">
+                    <span class="create-post-add-icon"></span>
+                  </button>
+                </div>
+              </div>
+            </main>
+            <div id="createPostToast" class="create-post-toast is-hidden" aria-live="polite"></div>
+          </section>
+
           <div id="lightboxView" class="lightbox-view is-hidden" aria-hidden="true">
             <button id="lightboxClose" class="lightbox-close" type="button" aria-label="&#20851;&#38381;&#22823;&#22270;">
               <span class="icon-close"></span>
@@ -207,13 +291,37 @@
     <template id="postTemplate">
       <article class="post-card">
         <div class="post-header">
-          <span class="post-time"></span>
-          <button class="more-button" type="button" aria-label="&#26356;&#22810;">
-            <span class="icon-dots"></span>
+          <div class="post-author">
+            <img class="post-author-avatar" alt="用户头像" />
+            <div class="post-author-copy">
+              <span class="post-author-name"></span>
+              <span class="post-time"></span>
+            </div>
+          </div>
+          <button
+            class="more-button post-share-button"
+            type="button"
+            aria-label="生成分享长图"
+            data-html2canvas-ignore="true"
+          >
+            <i class="fa-solid fa-share-nodes post-share-icon" aria-hidden="true"></i>
           </button>
         </div>
         <p class="post-text"></p>
         <div class="post-gallery"></div>
+        <div class="export-poster-root fixed top-0 left-0 z-[-10] opacity-0 pointer-events-none" aria-hidden="true">
+          <article class="export-poster-sheet w-[393px] bg-white">
+            <div class="export-poster-header">
+              <img class="export-poster-avatar" alt="用户头像" />
+              <div class="export-poster-meta">
+                <p class="export-poster-name"></p>
+                <p class="export-poster-time"></p>
+              </div>
+            </div>
+            <p class="export-poster-text"></p>
+            <div class="export-poster-gallery"></div>
+          </article>
+        </div>
       </article>
     </template>
 
