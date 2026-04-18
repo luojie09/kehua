@@ -1086,7 +1086,7 @@ button {
 .create-post-panel {
   min-height: calc(100% - 8px);
   border-radius: 32px;
-  background: #f3f3f3;
+  background: #ffffff;
   padding: 6px 0 20px;
 }
 
