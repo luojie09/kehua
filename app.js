@@ -660,13 +660,7 @@ async function exportComposerDraftAsImage(content) {
 
     const imgData = canvas.toDataURL("image/png");
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const downloadLink = document.createElement("a");
-    downloadLink.href = imgData;
-    downloadLink.download = `动态分享_草稿_${timestamp}.png`;
-    downloadLink.style.display = "none";
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
+    openLightbox(imgData, `动态分享_草稿_${timestamp}.png`);
   } finally {
     posterNode.classList.remove("is-capturing");
     posterNode.remove();
@@ -693,8 +687,8 @@ async function saveCreatedPost() {
 
   try {
     await exportComposerDraftAsImage(rawContent);
-    updateStatus("海报已保存，草稿已保留。", "is-success");
-    updateCreatePostToast("海报已保存，草稿未清空");
+    updateStatus("海报已生成，请长按预览图保存到手机相册。", "is-success");
+    updateCreatePostToast("海报已生成，长按预览图可保存");
   } catch (error) {
     const message = getSafeErrorMessage(error, "海报生成失败，请稍后重试。");
     updateStatus(`海报生成失败：${message}`, "is-error");
@@ -1856,14 +1850,8 @@ async function handleShareToImage(postId, button) {
 
     const imgData = canvas.toDataURL("image/png");
     const safeDownloadId = String(postId).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") || "post";
-    const downloadLink = document.createElement("a");
-    downloadLink.href = imgData;
-    downloadLink.download = `动态分享_${safeDownloadId}.png`;
-    downloadLink.style.display = "none";
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-    updateStatus("海报已保存。", "is-success");
+    openLightbox(imgData, `动态分享_${safeDownloadId}.png`);
+    updateStatus("海报已生成，请长按预览图保存到手机相册。", "is-success");
   } catch (error) {
     console.warn("Failed to generate share poster.", error);
     updateStatus(`海报生成失败：${getSafeErrorMessage(error, "请稍后重试。")}`, "is-error");
@@ -2392,20 +2380,7 @@ function switchLightboxImage(direction) {
 }
 
 function saveCurrentLightboxImage() {
-  const downloadUrl = optionalString(elements.lightboxDownload.dataset.url) || currentLightboxUrl;
-  const downloadName = optionalString(elements.lightboxDownload.dataset.filename) || "dynamic-image.jpg";
-
-  if (!downloadUrl) {
-    return;
-  }
-
-  const anchor = document.createElement("a");
-  anchor.href = downloadUrl;
-  anchor.download = downloadName;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  updateStatus("请长按图片保存到手机相册。", "is-success");
 }
 
 function handleLightboxTouchStart(event) {
@@ -3374,7 +3349,11 @@ if (isClientRuntime) {
     event.stopPropagation();
     closeLightbox();
   });
-  elements.lightboxView.addEventListener("click", () => {
+  elements.lightboxView.addEventListener("click", (event) => {
+    if (event.target !== elements.lightboxView && event.target !== elements.lightboxStage) {
+      return;
+    }
+
     if (Date.now() < lightboxIgnoreClickUntil) {
       return;
     }
@@ -3391,26 +3370,6 @@ if (isClientRuntime) {
   elements.lightboxImage.addEventListener("error", () => {
     window.posthog.capture("image_load_fallback");
     updateStatus("\u56fe\u7247\u9884\u89c8\u5931\u8d25\uff1a\u56fe\u7247\u8d44\u6e90\u65e0\u6cd5\u8bfb\u53d6\u3002", "is-error");
-  });
-  elements.lightboxImage.addEventListener(
-    "touchstart",
-    () => {
-      clearTimeout(lightboxLongPressTimer);
-      lightboxLongPressTimer = window.setTimeout(() => {
-        saveCurrentLightboxImage();
-      }, 650);
-    },
-    { passive: true }
-  );
-  ["touchend", "touchcancel", "touchmove"].forEach((eventName) => {
-    elements.lightboxImage.addEventListener(
-      eventName,
-      () => {
-        clearTimeout(lightboxLongPressTimer);
-        lightboxLongPressTimer = null;
-      },
-      { passive: true }
-    );
   });
 
   elements.fileInput.addEventListener("change", async (event) => {

@@ -106,19 +106,17 @@
 
           <section id="updateNoticeOverlay" class="update-notice-overlay is-hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="更新提示">
             <article class="update-notice-card">
-              <p class="update-notice-text">
-                亲爱的可话er们：
-                <br />
-                <br />
-                主页更新了，我尽力还原了可话的主页
-                <br />
-                背景单击可修改，大家可以在里面码字，点保存时可以生成一张分享图
-                <br />
-                由于没有登录系统和服务器，所以只能保存图片到本地储存。
-                <br />
-                <br />
-                另外再历史动态，每条动态的右上角也可以一键导出排好版的图片了
-              </p>
+              <h2 class="update-notice-title">主页更新说明</h2>
+              <div class="update-notice-text">
+                <p class="update-notice-body">亲爱的可话er们：</p>
+                <p class="update-notice-body">主页更新了，我尽力还原了可话的主页体验。</p>
+                <ul class="update-notice-list">
+                  <li>单击背景即可更换图片。</li>
+                  <li>可以在页面里直接码字，点击保存后会生成分享图。</li>
+                  <li>由于暂时没有登录系统和服务器，数据仅保存在当前设备本地。</li>
+                </ul>
+                <p class="update-notice-body">另外在历史动态里，每条动态右上角也支持一键导出排版图片。</p>
+              </div>
               <p class="update-notice-sign">——原子</p>
               <p class="update-notice-hint">点击任意位置关闭</p>
             </article>
@@ -276,10 +274,11 @@
             <button id="lightboxClose" class="lightbox-close" type="button" aria-label="&#20851;&#38381;&#22823;&#22270;">
               <span class="icon-close"></span>
             </button>
-            <button id="lightboxDownload" class="lightbox-download" type="button">&#20445;&#23384;&#22270;&#29255;</button>
+            <button id="lightboxDownload" class="lightbox-download" type="button">&#38271;&#25353;&#20445;&#23384;</button>
             <div id="lightboxStage" class="lightbox-stage">
               <img id="lightboxImage" class="lightbox-image" alt="&#22823;&#22270;&#39044;&#35272;" />
             </div>
+            <p class="lightbox-hint">&#38271;&#25353;&#22270;&#29255;&#20445;&#23384;&#21040;&#25163;&#26426;&#30456;&#20876;</p>
           </div>
 
           <input id="coverInput" type="file" accept="image/*" hidden />
